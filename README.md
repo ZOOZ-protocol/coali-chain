@@ -6,6 +6,7 @@ Coalichain is the blockchain of the [ZOOZ Protocol](https://github.com/ZOOZ-prot
 
 - Testnet: <https://testnet.coali.app>
 - RPC: `wss://rpc.testnet.coali.app`
+- Explorer: <https://explorer.testnet.coali.app>
 - Faucet (test ZOOZ): <https://faucet.testnet.coali.app>
 - Run a validator: <https://testnet.coali.app/run-a-validator>
 
@@ -34,6 +35,7 @@ pallets/coali-ledger/    Proof ledger: decisions, votes, trusts, snapshots
 pallets/proof-of-trust/  Validator selection by trust
 relayer/                 App database -> chain publisher
 faucet/                  Testnet faucet
+scan/                    Explorer indexer + API (SQLite); site in deploy/rpc/explorer
 watchdog/                Testnet finality watchdog
 deploy/                  Docker images, chain spec generation, server setup
 scripts/                 Local network and end-to-end tests

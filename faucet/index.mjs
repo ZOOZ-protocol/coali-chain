@@ -90,8 +90,8 @@ html[lang=en] [data-l=fr],html[lang=fr] [data-l=en]{display:none!important}
 function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q)return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
 function setLang(l){L=l;document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
 let L;setLang(getLang()==='fr'?'fr':'en');
-const T={en:{sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See this transfer in the explorer',acct:'Network error, please retry.'},
-fr:{sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir ce transfert dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};
+const T={en:{sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See your account and its history in the explorer',acct:'Network error, please retry.'},
+fr:{sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir votre compte et son historique dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};
 const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function go(){
   const o=document.getElementById('out'),b=document.getElementById('b'),a=document.getElementById('a').value.trim(),t=T[L];
@@ -168,7 +168,7 @@ http
         ...r,
         blockNumber,
         balance: await balanceOf(address).catch(() => "?"),
-        explorer: `${EXPLORER}/?rpc=wss://rpc.testnet.coali.app#/explorer/query/${r.block}`,
+        explorer: `${EXPLORER}/account/${address}`,
       });
     } catch (e) {
       json(res, 500, {

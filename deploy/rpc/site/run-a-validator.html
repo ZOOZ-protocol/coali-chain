@@ -67,8 +67,8 @@ docker run -d --name coali --restart unless-stopped \
   <span data-l="fr">Collez la réponse complète de la commande précédente (<code>{"jsonrpc":"2.0","result":{"keys":…,"proof":…}}</code>) :</span>
   <textarea id="res" rows="3" oninput="split()" style="margin-top:8px"></textarea>
   <div class="out" id="splitbox" style="display:none">
-    <span data-l="en">Open the <a href="https://explorer.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorer › Developer › Extrinsics</a>, pick your validator account, choose <code>session</code> › <code>setKeys(keys, proof)</code> and fill in:</span>
-    <span data-l="fr">Ouvrez l'<a href="https://explorer.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorateur › Developer › Extrinsics</a>, choisissez votre compte validateur, sélectionnez <code>session</code> › <code>setKeys(keys, proof)</code> et remplissez :</span>
+    <span data-l="en">Open the <a href="https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorer › Developer › Extrinsics</a>, pick your validator account, choose <code>session</code> › <code>setKeys(keys, proof)</code> and fill in:</span>
+    <span data-l="fr">Ouvrez l'<a href="https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorateur › Developer › Extrinsics</a>, choisissez votre compte validateur, sélectionnez <code>session</code> › <code>setKeys(keys, proof)</code> et remplissez :</span>
     <p><b>keys › aura</b><br><span class="copy" id="aura" onclick="cp(this)"></span></p>
     <p><b>keys › grandpa</b><br><span class="copy" id="gran" onclick="cp(this)"></span></p>
     <p><b>proof</b><br><span class="copy" id="proof" onclick="cp(this)"></span></p>
@@ -83,8 +83,8 @@ docker run -d --name coali --restart unless-stopped \
 </li>
 <li>
   <b class="t" data-l="en">Check you are validating</b><b class="t" data-l="fr">Vérifiez que vous validez</b>
-  <span data-l="en">In the explorer: Developer › Chain state › <code>session</code> › <code>validators()</code> — your address is in the list. Your node logs show <code>🎁 Prepared block for proposing</code>.</span>
-  <span data-l="fr">Dans l'explorateur : Developer › Chain state › <code>session</code> › <code>validators()</code> — votre adresse est dans la liste. Les logs de votre nœud affichent <code>🎁 Prepared block for proposing</code>.</span>
+  <span data-l="en">On the explorer's <a href="https://explorer.testnet.coali.app/validators" target="_blank">Validators</a> page, your address is in the list. Your node logs show <code>🎁 Prepared block for proposing</code>.</span>
+  <span data-l="fr">Sur la page <a href="https://explorer.testnet.coali.app/validators" target="_blank">Validateurs</a> de l'explorateur, votre adresse est dans la liste. Les logs de votre nœud affichent <code>🎁 Prepared block for proposing</code>.</span>
 </li>
 </ol>
 
@@ -101,7 +101,7 @@ docker run -d --name coali --restart unless-stopped \
   <li>Mises à jour : rechargez la nouvelle image quand elle est annoncée, puis <code>docker restart coali</code>. Vos clés restent dans le volume <code>coali-data</code> — ne le supprimez jamais.</li>
   <li>Ne partagez jamais votre phrase de récupération. L'équipe Coali ne vous la demandera jamais.</li>
 </ul>
-<footer><a href="/">← testnet.coali.app</a></footer>
+<footer><a href="/">← testnet.coali.app</a> · <a href="https://github.com/ZOOZ-protocol/coali-chain">GitHub</a></footer>
 </div>
 <script>
 function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q==='fr'||q==='en')return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}

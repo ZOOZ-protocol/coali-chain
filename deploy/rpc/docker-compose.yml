@@ -1,4 +1,4 @@
-# Public access server: archive RPC node, Polkadot.js Apps (explorer), faucet, Caddy (TLS),
+# Public access server: archive RPC node, Coaliscan explorer (scan + static site), Polkadot.js Apps, faucet, Caddy (TLS),
 # and optionally the relayer (docker compose --profile relayer up -d).
 # Expects: .env (DOMAIN, ACME_EMAIL, IMAGE), spec/coali-testnet-raw.json,
 # faucet.env (FAUCET_URI) and relayer.env for the relayer profile.
@@ -45,6 +45,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv/site:ro
+      - ./explorer:/srv/explorer:ro
       - ./spec:/srv/spec:ro
       - /opt/coali-downloads:/srv/downloads:ro
       - caddy-data:/data
@@ -57,6 +58,17 @@ services:
     environment:
       CHAIN_WS: ws://rpc:9944
       PORT: "8080"
+    depends_on: [rpc]
+
+  scan:
+    build: ../../scan
+    container_name: coali-scan
+    restart: unless-stopped
+    environment:
+      CHAIN_WS: ws://rpc:9944
+      DB_PATH: /data/scan.db
+    volumes:
+      - scan-data:/data
     depends_on: [rpc]
 
   watchdog:
@@ -81,3 +93,4 @@ services:
 volumes:
   rpc-data:
   caddy-data:
+  scan-data:

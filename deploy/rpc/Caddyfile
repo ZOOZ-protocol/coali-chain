@@ -23,6 +23,17 @@ rpc.{$DOMAIN} {
 }
 
 explorer.{$DOMAIN} {
+	handle /api/* {
+		reverse_proxy scan:8090
+	}
+	handle {
+		root * /srv/explorer
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+apps.{$DOMAIN} {
 	@root {
 		path /
 		not query rpc=*

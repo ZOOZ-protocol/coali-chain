@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coalichain Explorer</title>
+<meta name="description" content="Coalichain testnet explorer: blocks, transactions, accounts, votes and trusts.">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="top">
+  <div class="bar">
+    <a class="logo" href="/">Coali<span>scan</span> <small>testnet</small></a>
+    <nav>
+      <a href="/blocks" data-nav="blocks"></a>
+      <a href="/txs" data-nav="txs"></a>
+      <a href="/votes" data-nav="votes"></a>
+      <a href="/validators" data-nav="validators"></a>
+    </nav>
+    <div class="lang"><button id="b-en" onclick="setLang('en')">EN</button><button id="b-fr" onclick="setLang('fr')">FR</button></div>
+  </div>
+  <form class="search" onsubmit="return doSearch(event)">
+    <input id="q" autocomplete="off" spellcheck="false">
+    <button id="qb"></button>
+  </form>
+</div>
+<main id="app" class="wrap"></main>
+<footer class="wrap" id="foot"></footer>
+<script src="/app.js"></script>
+</body>
+</html>
