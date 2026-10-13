@@ -12,12 +12,13 @@ test -s keys/phrase && test -s keys/node-key
 docker volume create "$VOLUME" >/dev/null
 
 run() {
-  docker run --rm -v "$VOLUME:/data" -v "$PWD/spec:/spec:ro" -v "$PWD/keys:/keys:ro" \
-    --entrypoint sh "$IMAGE" -c "$1"
+  docker run --rm --user root -v "$VOLUME:/data" -v "$PWD/spec:/spec:ro" -v "$PWD/keys:/keys:ro" \
+    --entrypoint sh "$IMAGE" -c "set -e; $1"
 }
+run 'rm -rf /data/chains/*/keystore'
 run 'coali-node key insert --base-path /data --chain /spec/coali-testnet-raw.json --scheme sr25519 --key-type aura --suri "$(cat /keys/phrase)"'
 run 'coali-node key insert --base-path /data --chain /spec/coali-testnet-raw.json --scheme ed25519 --key-type gran --suri "$(cat /keys/phrase)"'
-run 'cp /keys/node-key /data/node-key && chmod 600 /data/node-key'
+run 'cp /keys/node-key /data/node-key && chmod 600 /data/node-key && chown -R coali:coali /data'
 
 shred -u keys/* 2>/dev/null || rm -f keys/*
 rmdir keys
