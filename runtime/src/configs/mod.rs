@@ -44,7 +44,7 @@ use sp_version::RuntimeVersion;
 use super::{
 	AccountId, Aura, Balance, Balances, Block, BlockNumber, Hash, Nonce, PalletInfo, Runtime,
 	RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask,
-	System, EXISTENTIAL_DEPOSIT, SLOT_DURATION, VERSION,
+	ProofOfTrust, System, EXISTENTIAL_DEPOSIT, SLOT_DURATION, VERSION,
 };
 
 const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
@@ -167,6 +167,46 @@ impl pallet_sudo::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type RuntimeCall = RuntimeCall;
 	type WeightInfo = pallet_sudo::weights::SubstrateWeight<Runtime>;
+}
+
+parameter_types! {
+	/// 10 minutes at 6-second blocks.
+	pub const SessionPeriod: BlockNumber = 100;
+	pub const SessionOffset: BlockNumber = 0;
+	pub const PotMaxValidators: u32 = 32;
+	pub const PotMaxCandidates: u32 = 256;
+	/// Three sessions: a newly selected validator starts one session later.
+	pub const PotOfflineAfter: BlockNumber = 300;
+}
+
+impl pallet_authorship::Config for Runtime {
+	type FindAuthor = pallet_session::FindAccountFromAuthorIndex<Self, Aura>;
+	type EventHandler = ProofOfTrust;
+}
+
+impl pallet_session::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type ValidatorId = AccountId;
+	type ValidatorIdOf = sp_runtime::traits::ConvertInto;
+	type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
+	type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
+	type SessionManager = ProofOfTrust;
+	type SessionHandler = <super::SessionKeys as sp_runtime::traits::OpaqueKeys>::KeyTypeIdProviders;
+	type Keys = super::SessionKeys;
+	type DisablingStrategy = ();
+	type WeightInfo = ();
+	type Currency = Balances;
+	type KeyDeposit = ();
+}
+
+impl pallet_proof_of_trust::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+	type AttesterOrigin = pallet_coali_ledger::EnsureAttester<Runtime>;
+	type TrustScore = super::CoaliLedger;
+	type MaxValidators = PotMaxValidators;
+	type MaxCandidates = PotMaxCandidates;
+	type OfflineAfter = PotOfflineAfter;
 }
 
 parameter_types! {

@@ -201,6 +201,17 @@ mod runtime {
 	#[runtime::pallet_index(1)]
 	pub type Timestamp = pallet_timestamp;
 
+	// Proof of trust picks the validators; Session hands them to Aura and GRANDPA,
+	// so these must be declared before Aura and Grandpa.
+	#[runtime::pallet_index(8)]
+	pub type Authorship = pallet_authorship;
+
+	#[runtime::pallet_index(9)]
+	pub type ProofOfTrust = pallet_proof_of_trust;
+
+	#[runtime::pallet_index(10)]
+	pub type Session = pallet_session;
+
 	#[runtime::pallet_index(2)]
 	pub type Aura = pallet_aura;
 

@@ -35,6 +35,37 @@ pub type Hash32 = [u8; 32];
 pub const VOTE_CONTEXT: &[u8] = b"coali/vote/v1";
 pub const TRUST_CONTEXT: &[u8] = b"coali/trust/v1";
 
+/// Trust an account receives, read by the proof-of-trust validator selection.
+pub trait TrustScore<AccountId> {
+	/// Number of distinct accounts trusting `who`, in any category.
+	fn trust_received(who: &AccountId) -> u32;
+}
+
+impl<T: Config> TrustScore<T::AccountId> for Pallet<T> {
+	fn trust_received(who: &T::AccountId) -> u32 {
+		TrustReceived::<T>::get(who)
+	}
+}
+
+/// Origin check: a signed origin from a registered attester.
+pub struct EnsureAttester<T>(core::marker::PhantomData<T>);
+
+impl<T: Config> frame_support::traits::EnsureOrigin<T::RuntimeOrigin> for EnsureAttester<T> {
+	type Success = T::AccountId;
+
+	fn try_origin(o: T::RuntimeOrigin) -> Result<T::AccountId, T::RuntimeOrigin> {
+		match frame_system::ensure_signed(o.clone()) {
+			Ok(who) if Attesters::<T>::contains_key(&who) => Ok(who),
+			_ => Err(o),
+		}
+	}
+
+	#[cfg(feature = "runtime-benchmarks")]
+	fn try_successful_origin() -> Result<T::RuntimeOrigin, ()> {
+		Err(())
+	}
+}
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -147,6 +178,22 @@ pub mod pallet {
 	/// Next expected trust nonce per truster (replay protection).
 	#[pallet::storage]
 	pub type TrustNonces<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+	/// (trusted, truster) -> number of categories in which truster trusts trusted.
+	#[pallet::storage]
+	pub type TrustPairs<T: Config> = StorageDoubleMap<
+		_,
+		Blake2_128Concat,
+		T::AccountId,
+		Blake2_128Concat,
+		T::AccountId,
+		u32,
+		ValueQuery,
+	>;
+
+	/// Number of distinct trusters of an account, whatever the category.
+	#[pallet::storage]
+	pub type TrustReceived<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
 
 	#[pallet::storage]
 	pub type Snapshots<T: Config> = StorageDoubleMap<
@@ -317,10 +364,22 @@ pub mod pallet {
 				TrustAction::Give => {
 					ensure!(!TrustEdges::<T>::contains_key(&key), Error::<T>::AlreadyTrusted);
 					TrustEdges::<T>::insert(&key, frame_system::Pallet::<T>::block_number());
+					let categories = TrustPairs::<T>::get(&trusted, &truster);
+					if categories == 0 {
+						TrustReceived::<T>::mutate(&trusted, |n| *n = n.saturating_add(1));
+					}
+					TrustPairs::<T>::insert(&trusted, &truster, categories.saturating_add(1));
 				},
 				TrustAction::Revoke => {
 					ensure!(TrustEdges::<T>::contains_key(&key), Error::<T>::TrustNotFound);
 					TrustEdges::<T>::remove(&key);
+					let categories = TrustPairs::<T>::get(&trusted, &truster).saturating_sub(1);
+					if categories == 0 {
+						TrustPairs::<T>::remove(&trusted, &truster);
+						TrustReceived::<T>::mutate(&trusted, |n| *n = n.saturating_sub(1));
+					} else {
+						TrustPairs::<T>::insert(&trusted, &truster, categories);
+					}
 				},
 			}
 			let next = nonce.checked_add(1).ok_or(Error::<T>::Overflow)?;

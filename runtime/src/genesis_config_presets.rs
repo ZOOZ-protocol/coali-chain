@@ -15,7 +15,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{AccountId, BalancesConfig, CoaliLedgerConfig, RuntimeGenesisConfig, SudoConfig};
+use crate::{
+	AccountId, BalancesConfig, CoaliLedgerConfig, ProofOfTrustConfig, RuntimeGenesisConfig, SessionConfig,
+	SessionKeys, SudoConfig,
+};
 use alloc::{vec, vec::Vec};
 use frame_support::build_struct_json_patch;
 use serde_json::Value;
@@ -26,7 +29,7 @@ use sp_keyring::Sr25519Keyring;
 
 // Returns the genesis config presets populated with given parameters.
 fn testnet_genesis(
-	initial_authorities: Vec<(AuraId, GrandpaId)>,
+	initial_authorities: Vec<(AccountId, AuraId, GrandpaId)>,
 	endowed_accounts: Vec<AccountId>,
 	root: AccountId,
 ) -> Value {
@@ -38,11 +41,18 @@ fn testnet_genesis(
 				.map(|k| (k, 1u128 << 60))
 				.collect::<Vec<_>>(),
 		},
-		aura: pallet_aura::GenesisConfig {
-			authorities: initial_authorities.iter().map(|x| x.0.clone()).collect::<Vec<_>>(),
+		// Aura and GRANDPA authorities come from the session keys of the founders.
+		session: SessionConfig {
+			keys: initial_authorities
+				.iter()
+				.map(|(acc, aura, grandpa)| {
+					(acc.clone(), acc.clone(), SessionKeys { aura: aura.clone(), grandpa: grandpa.clone() })
+				})
+				.collect::<Vec<_>>(),
 		},
-		grandpa: pallet_grandpa::GenesisConfig {
-			authorities: initial_authorities.iter().map(|x| (x.1.clone(), 1)).collect::<Vec<_>>(),
+		proof_of_trust: ProofOfTrustConfig {
+			founders: initial_authorities.iter().map(|x| x.0.clone()).collect::<Vec<_>>(),
+			min_trust: 1,
 		},
 		sudo: SudoConfig { key: Some(root.clone()) },
 		coali_ledger: CoaliLedgerConfig { attesters: vec![root] },
@@ -53,9 +63,10 @@ fn testnet_genesis(
 pub fn development_config_genesis() -> Value {
 	testnet_genesis(
 		vec![(
-			sp_keyring::Sr25519Keyring::Alice.public().into(),
-			sp_keyring::Ed25519Keyring::Alice.public().into(),
-		)],
+				Sr25519Keyring::Alice.to_account_id(),
+				sp_keyring::Sr25519Keyring::Alice.public().into(),
+				sp_keyring::Ed25519Keyring::Alice.public().into(),
+			)],
 		vec![
 			Sr25519Keyring::Alice.to_account_id(),
 			Sr25519Keyring::Bob.to_account_id(),
@@ -71,14 +82,17 @@ pub fn local_config_genesis() -> Value {
 	testnet_genesis(
 		vec![
 			(
+				Sr25519Keyring::Alice.to_account_id(),
 				sp_keyring::Sr25519Keyring::Alice.public().into(),
 				sp_keyring::Ed25519Keyring::Alice.public().into(),
 			),
 			(
+				Sr25519Keyring::Bob.to_account_id(),
 				sp_keyring::Sr25519Keyring::Bob.public().into(),
 				sp_keyring::Ed25519Keyring::Bob.public().into(),
 			),
 			(
+				Sr25519Keyring::Charlie.to_account_id(),
 				sp_keyring::Sr25519Keyring::Charlie.public().into(),
 				sp_keyring::Ed25519Keyring::Charlie.public().into(),
 			),

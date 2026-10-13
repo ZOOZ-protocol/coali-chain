@@ -1,3 +1,5 @@
-target/
-Dockerfile
-.dockerignore
+target
+**/node_modules
+**/.env
+deploy/secrets
+.git

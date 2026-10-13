@@ -1,0 +1,17 @@
+{
+	email {$ACME_EMAIL}
+}
+
+rpc.{$DOMAIN} {
+	reverse_proxy rpc:9944
+}
+
+explorer.{$DOMAIN} {
+	@root path /
+	redir @root /?rpc=wss://rpc.{$DOMAIN}#/explorer
+	reverse_proxy explorer:80
+}
+
+faucet.{$DOMAIN} {
+	reverse_proxy faucet:8080
+}

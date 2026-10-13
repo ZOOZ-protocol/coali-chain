@@ -1,0 +1,71 @@
+# Public access server: archive RPC node, Polkadot.js Apps (explorer), faucet, Caddy (TLS),
+# and optionally the relayer (docker compose --profile relayer up -d).
+# Expects: .env (DOMAIN, ACME_EMAIL, IMAGE), spec/coali-testnet-raw.json,
+# faucet.env (FAUCET_URI) and relayer.env for the relayer profile.
+services:
+  rpc:
+    image: ${IMAGE:-coali-node:testnet}
+    container_name: coali-rpc
+    restart: unless-stopped
+    command:
+      - --chain=/spec/coali-testnet-raw.json
+      - --base-path=/data
+      - --name=coali-rpc
+      - --port=30333
+      - --rpc-port=9944
+      - --rpc-external
+      - --rpc-methods=safe
+      - --rpc-cors=all
+      - --rpc-max-connections=500
+      - --state-pruning=archive
+      - --blocks-pruning=archive-canonical
+    ports:
+      - "30333:30333"
+    volumes:
+      - rpc-data:/data
+      - ./spec:/spec:ro
+
+  explorer:
+    image: jacogr/polkadot-js-apps:latest
+    container_name: coali-explorer
+    restart: unless-stopped
+    environment:
+      WS_URL: wss://rpc.${DOMAIN}
+
+  caddy:
+    image: caddy:2
+    container_name: coali-caddy
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  faucet:
+    build: ../../faucet
+    container_name: coali-faucet
+    restart: unless-stopped
+    env_file: faucet.env
+    environment:
+      CHAIN_WS: ws://rpc:9944
+      PORT: "8080"
+    depends_on: [rpc]
+
+  relayer:
+    profiles: ["relayer"]
+    build: ../../relayer
+    container_name: coali-relayer
+    restart: unless-stopped
+    env_file: relayer.env
+    environment:
+      CHAIN_WS: ws://rpc:9944
+    depends_on: [rpc]
+
+volumes:
+  rpc-data:
+  caddy-data:

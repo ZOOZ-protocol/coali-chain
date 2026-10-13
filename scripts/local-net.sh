@@ -23,5 +23,9 @@ start() {
 start alice 30333 9944 --node-key 0000000000000000000000000000000000000000000000000000000000000001
 start bob 30334 9945 --bootnodes "/ip4/127.0.0.1/tcp/30333/p2p/$ALICE_PEER"
 start charlie 30335 9946 --bootnodes "/ip4/127.0.0.1/tcp/30333/p2p/$ALICE_PEER"
+# Dave is not a founder: he validates only once admitted by proof of trust (scripts/e2e/pot.mjs).
+if [ "${WITH_DAVE:-0}" = 1 ]; then
+  start dave 30336 9947 --bootnodes "/ip4/127.0.0.1/tcp/30333/p2p/$ALICE_PEER"
+fi
 
 wait

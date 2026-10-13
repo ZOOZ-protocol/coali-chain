@@ -1,0 +1,27 @@
+{
+  "validators": [
+    {
+      "name": "validator-1",
+      "aura": "5HKNVUX2S8uf6rw1iK5RRfDhNh2EGZ1F8ohb9PC849bUgqGZ",
+      "grandpa": "5CuF9ZKhEnKSCEAMy76dyi1b4dacdVnNm24wSG54Vi6rXjpu",
+      "peer_id": "12D3KooWF1TtSRkDG7vM9QPMwZsh1y1RsaMiGXtDUMTNeoKf13bG"
+    },
+    {
+      "name": "validator-2",
+      "aura": "5FsDugkAj9e3D3zRMQhjNpzAk5fRRfSsA4EeGp7BsDR1qUp7",
+      "grandpa": "5FfSgJWmjzh4UQXGxYnrU17dg6NRJZRLWKqhtiMAx3jD6hEd",
+      "peer_id": "12D3KooWPf5Fr9y6kq9Ve8gBWcR6kDrKt43AumA129HTBu1qHmFo"
+    },
+    {
+      "name": "validator-3",
+      "aura": "5F4qbWMji25bpPMoTKfYU99HdL9VpigecnKcYdEwVhrQGwyM",
+      "grandpa": "5DgDLb6JGJA9hkc1sRWEEWD5oFDxAPXpGx2nAtNhtKceeEdR",
+      "peer_id": "12D3KooWQMaNMuejBF3VdrC2W1r439kSHNa5tP5drucydM4X36fU"
+    }
+  ],
+  "sudo": "5Gn9VEQR3LsC4Q2UCkmqV5DXSDq4fj747KEHrTzymTBHk5SR",
+  "attesters": [
+    "5Ece69BkcArVJVVRhrezvMYFf6rtyT5ohsyRChqizQhEFcxM"
+  ],
+  "faucet": "5Gxe4rSwUpDXHkZQxw48uweZGpXvJLL4EWqHAsUkQJvg16at"
+}

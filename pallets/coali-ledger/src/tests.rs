@@ -196,3 +196,24 @@ fn trust_rejects_bad_signature_and_self_trust() {
 		);
 	});
 }
+
+#[test]
+fn trust_received_counts_distinct_trusters() {
+	new_test_ext().execute_with(|| {
+		use crate::TrustScore;
+		let rep = account(&pair("Rep"));
+		let give = |seed: &str, category: u32, action: TrustAction, nonce: u32| {
+			let (truster, sig) = signed_trust(seed, &rep, category, action, nonce);
+			assert_ok!(Ledger::record_trust(origin(), truster, rep.clone(), category, action, nonce, sig));
+		};
+		give("a", 1, TrustAction::Give, 0);
+		give("a", 2, TrustAction::Give, 1);
+		assert_eq!(Ledger::trust_received(&rep), 1);
+		give("b", 1, TrustAction::Give, 0);
+		assert_eq!(Ledger::trust_received(&rep), 2);
+		give("a", 1, TrustAction::Revoke, 2);
+		assert_eq!(Ledger::trust_received(&rep), 2);
+		give("a", 2, TrustAction::Revoke, 3);
+		assert_eq!(Ledger::trust_received(&rep), 1);
+	});
+}

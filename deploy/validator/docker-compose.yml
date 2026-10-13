@@ -1,0 +1,29 @@
+# One validator per server. Only the p2p port is public; RPC and metrics stay on localhost.
+# Expects next to this file: .env (NODE_NAME, IMAGE), spec/coali-testnet-raw.json,
+# and the node key + session keys inserted with insert-keys.sh.
+services:
+  validator:
+    image: ${IMAGE:-coali-node:testnet}
+    container_name: coali-validator
+    restart: unless-stopped
+    command:
+      - --chain=/spec/coali-testnet-raw.json
+      - --base-path=/data
+      - --validator
+      - --name=${NODE_NAME}
+      - --node-key-file=/data/node-key
+      - --port=30333
+      - --rpc-port=9944
+      - --rpc-methods=safe
+      - --prometheus-external
+      - --prometheus-port=9615
+    ports:
+      - "30333:30333"
+      - "127.0.0.1:9944:9944"
+      - "127.0.0.1:9615:9615"
+    volumes:
+      - data:/data
+      - ./spec:/spec:ro
+
+volumes:
+  data:
