@@ -4,7 +4,7 @@ import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
 import { compactAddLength, stringToU8a, u8aConcat, u8aToHex } from "@polkadot/util";
 
 await cryptoWaitReady();
-const api = await ApiPromise.create({ provider: new WsProvider("ws://127.0.0.1:9944") });
+const api = await ApiPromise.create({ provider: new WsProvider(process.env.WS ?? "ws://127.0.0.1:9944") });
 const keyring = new Keyring({ type: "sr25519" });
 const alice = keyring.addFromUri("//Alice");
 const decisionId = blake2AsU8a(stringToU8a(`decision-${Date.now()}`)).slice(0, 16);

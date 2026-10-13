@@ -78,6 +78,10 @@ pub fn local_config_genesis() -> Value {
 				sp_keyring::Sr25519Keyring::Bob.public().into(),
 				sp_keyring::Ed25519Keyring::Bob.public().into(),
 			),
+			(
+				sp_keyring::Sr25519Keyring::Charlie.public().into(),
+				sp_keyring::Ed25519Keyring::Charlie.public().into(),
+			),
 		],
 		Sr25519Keyring::iter()
 			.filter(|v| v != &Sr25519Keyring::One && v != &Sr25519Keyring::Two)
