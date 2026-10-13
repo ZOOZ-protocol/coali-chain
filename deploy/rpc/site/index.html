@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coalichain Testnet</title>
+<meta name="description" content="Coalichain public testnet: a proof ledger for Coali / Popolitica votes, secured by Proof of Trust.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo">Coali<span>chain</span> testnet</div>
+  <div class="lang"><button id="b-en" onclick="setLang('en')">EN</button> <button id="b-fr" onclick="setLang('fr')">FR</button></div>
+</header>
+
+<h1 data-l="en">A public proof ledger for democratic votes</h1>
+<h1 data-l="fr">Un registre public de preuves pour les votes démocratiques</h1>
+<p class="lead" data-l="en">Coalichain records every vote, trust and result of the Coali / Popolitica apps as a verifiable proof. Validators are chosen by <b>Proof of Trust</b>: no staking, no mining — verified people trusted by the community.</p>
+<p class="lead" data-l="fr">Coalichain enregistre chaque vote, trust et résultat des applis Coali / Popolitica sous forme de preuve vérifiable. Les validateurs sont choisis par <b>Proof of Trust</b> : ni staking, ni minage — des personnes vérifiées, qui ont la confiance de la communauté.</p>
+
+<div class="status">
+  <div class="card"><div class="k"><span class="dot" id="dot"></span><span data-l="en">Network</span><span data-l="fr">Réseau</span></div><div class="v" id="net">…</div></div>
+  <div class="card"><div class="k" data-l="en">Latest block</div><div class="k" data-l="fr">Dernier bloc</div><div class="v" id="best">…</div></div>
+  <div class="card"><div class="k" data-l="en">Finalized</div><div class="k" data-l="fr">Finalisé</div><div class="v" id="fin">…</div></div>
+  <div class="card"><div class="k" data-l="en">Connected nodes</div><div class="k" data-l="fr">Nœuds connectés</div><div class="v" id="peers">…</div></div>
+</div>
+
+<div class="btns">
+  <a class="btn" href="https://faucet.testnet.coali.app"><span data-l="en">Get test ZOOZ</span><span data-l="fr">Recevoir des ZOOZ</span></a>
+  <a class="btn ghost" href="https://explorer.testnet.coali.app"><span data-l="en">Open the explorer</span><span data-l="fr">Ouvrir l'explorateur</span></a>
+</div>
+
+<h2 data-l="en">Test it in 5 minutes</h2>
+<h2 data-l="fr">Testez en 5 minutes</h2>
+<ol class="steps">
+  <li>
+    <b class="t" data-l="en">Install a wallet</b><b class="t" data-l="fr">Installez un portefeuille</b>
+    <span data-l="en"><a href="https://www.subwallet.app/" target="_blank">SubWallet</a> (mobile + Chrome) or <a href="https://www.talisman.xyz/" target="_blank">Talisman</a> (Chrome). Create an account and write down your recovery phrase. MetaMask and Trust Wallet do not support custom Polkadot-SDK networks.</span>
+    <span data-l="fr"><a href="https://www.subwallet.app/" target="_blank">SubWallet</a> (mobile + Chrome) ou <a href="https://www.talisman.xyz/" target="_blank">Talisman</a> (Chrome). Créez un compte et notez votre phrase de récupération. MetaMask et Trust Wallet ne gèrent pas les réseaux Polkadot-SDK personnalisés.</span>
+  </li>
+  <li>
+    <b class="t" data-l="en">Add the Coalichain network</b><b class="t" data-l="fr">Ajoutez le réseau Coalichain</b>
+    <span data-l="en">Settings › Manage networks › Add network, then paste the address below. Name, token (ZOOZ) and decimals fill in automatically.</span>
+    <span data-l="fr">Paramètres › Gérer les réseaux › Ajouter un réseau, puis collez l'adresse ci-dessous. Le nom, le jeton (ZOOZ) et les décimales se remplissent seuls.</span>
+    <div style="margin-top:8px"><span class="copy" onclick="cp(this)">wss://rpc.testnet.coali.app</span> <span class="muted" style="font-size:13px" data-l="en">(click to copy)</span><span class="muted" style="font-size:13px" data-l="fr">(cliquez pour copier)</span></div>
+  </li>
+  <li>
+    <b class="t" data-l="en">Get 100 free test ZOOZ</b><b class="t" data-l="fr">Recevez 100 ZOOZ de test gratuits</b>
+    <span data-l="en">Copy your address (starts with 5…) and paste it on the <a href="https://faucet.testnet.coali.app">faucet</a>. Tokens arrive in about 6 seconds. ZOOZ (Coalichain Token) on the testnet has no value.</span>
+    <span data-l="fr">Copiez votre adresse (commence par 5…) et collez-la sur le <a href="https://faucet.testnet.coali.app">faucet</a>. Les jetons arrivent en 6 secondes environ. Les ZOOZ (Coalichain Token) du testnet n'ont aucune valeur.</span>
+  </li>
+  <li>
+    <b class="t" data-l="en">Send a transaction</b><b class="t" data-l="fr">Faites une transaction</b>
+    <span data-l="en">Create a second account and send it 10 ZOOZ from your wallet. Fees are tiny and blocks come every 6 seconds; a block is final (irreversible) about 12 seconds later.</span>
+    <span data-l="fr">Créez un second compte et envoyez-lui 10 ZOOZ depuis votre portefeuille. Les frais sont minimes et un bloc arrive toutes les 6 secondes ; il devient définitif (irréversible) environ 12 secondes plus tard.</span>
+  </li>
+  <li>
+    <b class="t" data-l="en">Watch the chain and the votes</b><b class="t" data-l="fr">Regardez la chaîne et les votes</b>
+    <span data-l="en">In the <a href="https://explorer.testnet.coali.app">explorer</a> (Network › Explorer) you see blocks and events live. Votes from the Popolitica app appear as <code>coaliLedger.VoteRecorded</code>: a one-time address and a cryptographic commitment — the voter's identity and choice stay private, but the proof is public. Results are anchored as <code>coaliLedger.SnapshotPublished</code> (Merkle root of all votes) and public trusts as <code>coaliLedger.TrustRecorded</code>.</span>
+    <span data-l="fr">Dans l'<a href="https://explorer.testnet.coali.app">explorateur</a> (Network › Explorer), vous voyez les blocs et les événements en direct. Les votes de l'appli Popolitica apparaissent en <code>coaliLedger.VoteRecorded</code> : une adresse à usage unique et un engagement cryptographique — l'identité et le choix du votant restent privés, mais la preuve est publique. Les résultats sont ancrés en <code>coaliLedger.SnapshotPublished</code> (racine de Merkle de tous les votes) et les trusts publics en <code>coaliLedger.TrustRecorded</code>.</span>
+  </li>
+</ol>
+
+<h2 data-l="en">How Proof of Trust works</h2>
+<h2 data-l="fr">Comment fonctionne le Proof of Trust</h2>
+<ul data-l="en">
+  <li><b>Founders</b> (3 nodes today, in Falkenstein, Nuremberg and Helsinki) bootstrap the network.</li>
+  <li>Anyone can become a validator if they are <b>identity-verified on Coali / Popolitica</b> and receive at least <b>1 public trust</b> from other users (threshold set on chain, will grow).</li>
+  <li>The set is recomputed every session (5 minutes), most-trusted first.</li>
+  <li>A validator that stops producing blocks for ~12 minutes is set aside automatically, so a few offline nodes can never stop the network.</li>
+</ul>
+<ul data-l="fr">
+  <li>Les <b>fondateurs</b> (3 nœuds aujourd'hui, à Falkenstein, Nuremberg et Helsinki) démarrent le réseau.</li>
+  <li>Tout le monde peut devenir validateur s'il est <b>vérifié (KYC) sur Coali / Popolitica</b> et reçoit au moins <b>1 trust public</b> d'autres utilisateurs (seuil fixé sur la chaîne, il augmentera).</li>
+  <li>La liste est recalculée à chaque session (5 minutes), les plus « trustés » d'abord.</li>
+  <li>Un validateur qui ne produit plus de blocs pendant ~12 minutes est écarté automatiquement : quelques nœuds en panne ne peuvent pas bloquer le réseau.</li>
+</ul>
+
+<h2 data-l="en">Run a node</h2>
+<h2 data-l="fr">Lancer un nœud</h2>
+<p data-l="en">A small Linux server is enough (2 vCPU, 4 GB RAM, 80 GB disk, ~5 €/month), always on. Connect with the chain spec and Docker image, generate session keys with <code>author_rotateKeysWithOwner</code>, set them with <code>session.setKeys</code>, then send your validator address to the Coali team so it is linked to your verified account. Full guide: <a href="https://testnet.coali.app/run-a-validator">Run a validator</a>.</p>
+<p data-l="fr">Un petit serveur Linux suffit (2 vCPU, 4 Go de RAM, 80 Go de disque, ~5 €/mois), allumé en permanence. Connectez-le avec la chain spec et l'image Docker, générez vos clés de session avec <code>author_rotateKeysWithOwner</code>, enregistrez-les avec <code>session.setKeys</code>, puis envoyez votre adresse de validateur à l'équipe Coali pour qu'elle soit liée à votre compte vérifié. Guide complet : <a href="https://testnet.coali.app/run-a-validator">Devenir validateur</a>.</p>
+
+<footer>
+  <span data-l="en">Testnet — tokens have no value, the chain may be reset. Chain spec:</span>
+  <span data-l="fr">Testnet — les jetons n'ont aucune valeur, la chaîne peut être réinitialisée. Chain spec :</span>
+  <a href="/coali-testnet-raw.json">coali-testnet-raw.json</a> · <a href="https://coali.app">coali.app</a>
+</footer>
+</div>
+<script>
+function setLang(l){document.documentElement.lang=l;localStorage.lang=l;b('en');b('fr');function b(x){document.getElementById('b-'+x).className=x===l?'on':''}}
+setLang(localStorage.lang||((navigator.language||'').startsWith('fr')?'fr':'en'));
+function cp(el){navigator.clipboard.writeText(el.textContent);const t=el.textContent;el.textContent='✓ copied / copié';setTimeout(()=>el.textContent=t,1200)}
+const RPC='https://rpc.testnet.coali.app';
+async function rpc(method,params=[]){const r=await fetch(RPC,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:1,jsonrpc:'2.0',method,params})});return (await r.json()).result}
+async function refresh(){
+  try{
+    const [best,fh,health,chain]=await Promise.all([rpc('chain_getHeader'),rpc('chain_getFinalizedHead'),rpc('system_health'),rpc('system_chain')]);
+    const fin=await rpc('chain_getHeader',[fh]);
+    const n=h=>'#'+parseInt(h.number,16).toLocaleString();
+    document.getElementById('best').textContent=n(best);
+    document.getElementById('fin').textContent=n(fin);
+    document.getElementById('peers').textContent=health.peers+1;
+    document.getElementById('net').textContent=chain;
+    document.getElementById('dot').className='dot ok';
+  }catch(e){document.getElementById('dot').className='dot bad';document.getElementById('net').textContent='offline'}
+}
+refresh();setInterval(refresh,6000);
+</script>
+</body>
+</html>

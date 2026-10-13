@@ -44,6 +44,9 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/site:ro
+      - ./spec:/srv/spec:ro
+      - /opt/coali-downloads:/srv/downloads:ro
       - caddy-data:/data
 
   faucet:
@@ -54,6 +57,15 @@ services:
     environment:
       CHAIN_WS: ws://rpc:9944
       PORT: "8080"
+    depends_on: [rpc]
+
+  watchdog:
+    build: ../../watchdog
+    container_name: coali-watchdog
+    restart: unless-stopped
+    env_file: watchdog.env
+    environment:
+      CHAIN_WS: ws://rpc:9944
     depends_on: [rpc]
 
   relayer:

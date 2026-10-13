@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Run a Coalichain validator</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+pre{background:#0b1020;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow-x:auto;font:13px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;position:relative}
+pre button{position:absolute;top:6px;right:6px;background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:6px;font-size:12px;padding:3px 8px;cursor:pointer}
+input,textarea{width:100%;background:#0b1020;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px;font:13px ui-monospace,Menlo,monospace}
+.out{margin-top:10px}
+.warn{border-left:3px solid var(--accent);padding:4px 12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <a class="logo" href="/" style="text-decoration:none;color:var(--text)">Coali<span>chain</span> testnet</a>
+  <div class="lang"><button id="b-en" onclick="setLang('en')">EN</button> <button id="b-fr" onclick="setLang('fr')">FR</button></div>
+</header>
+
+<h1 data-l="en">Run a validator</h1>
+<h1 data-l="fr">Devenir validateur</h1>
+<p class="lead" data-l="en">About 20 minutes. No staking: you validate because you are a verified Coali / Popolitica member with at least 1 public trust.</p>
+<p class="lead" data-l="fr">Environ 20 minutes. Pas de staking : vous validez parce que vous êtes membre vérifié de Coali / Popolitica avec au moins 1 trust public.</p>
+
+<ol class="steps">
+<li>
+  <b class="t" data-l="en">Rent a small server</b><b class="t" data-l="fr">Louez un petit serveur</b>
+  <span data-l="en">Any cloud (Hetzner, OVH, Scaleway, DigitalOcean…): Ubuntu 24.04, 2 vCPU, 4 GB RAM, 80 GB disk (~5 €/month). Open TCP port <code>30333</code> in its firewall. It must stay on 24/7 — a laptop is not suitable.</span>
+  <span data-l="fr">N'importe quel cloud (Hetzner, OVH, Scaleway, DigitalOcean…) : Ubuntu 24.04, 2 vCPU, 4 Go de RAM, 80 Go de disque (~5 €/mois). Ouvrez le port TCP <code>30333</code> dans son pare-feu. Il doit rester allumé 24h/24 — un ordinateur portable ne convient pas.</span>
+</li>
+<li>
+  <b class="t" data-l="en">Install and start the node</b><b class="t" data-l="fr">Installez et lancez le nœud</b>
+  <span data-l="en">Connect to the server with SSH and paste:</span><span data-l="fr">Connectez-vous au serveur en SSH et collez :</span>
+<pre><button onclick="cpPre(this)">copy</button>apt-get update && apt-get install -y docker.io
+mkdir -p ~/coali && cd ~/coali
+curl -fsSLO https://testnet.coali.app/downloads/coali-node-docker.tar.gz
+curl -fsSLO https://testnet.coali.app/coali-testnet-raw.json
+gunzip -c coali-node-docker.tar.gz | docker load
+docker volume create coali-data
+docker run --rm -v coali-data:/data coali-node:testnet key generate-node-key --file /data/node-key
+docker run -d --name coali --restart unless-stopped \
+  -p 30333:30333 -p 127.0.0.1:9944:9944 \
+  -v coali-data:/data -v $PWD/coali-testnet-raw.json:/spec.json:ro \
+  coali-node:testnet --chain /spec.json --base-path /data \
+  --node-key-file /data/node-key --validator --name "YOUR-NODE-NAME" \
+  --unsafe-rpc-external --rpc-methods unsafe</pre>
+  <span data-l="en">Check it syncs (you should see <code>Imported #…</code> and <code>3 peers</code> or more): <code>docker logs --tail 5 coali</code>. Port 9944 stays private to the server.</span>
+  <span data-l="fr">Vérifiez qu'il se synchronise (vous devez voir <code>Imported #…</code> et <code>3 peers</code> ou plus) : <code>docker logs --tail 5 coali</code>. Le port 9944 reste privé au serveur.</span>
+</li>
+<li>
+  <b class="t" data-l="en">Create your validator account</b><b class="t" data-l="fr">Créez votre compte validateur</b>
+  <span data-l="en">In SubWallet or Talisman, create a dedicated account (e.g. "My Coali validator") and get free ZOOZ for it on the <a href="https://faucet.testnet.coali.app">faucet</a> (needed for one transaction fee). Paste its address here:</span>
+  <span data-l="fr">Dans SubWallet ou Talisman, créez un compte dédié (ex. « Mon validateur Coali ») et obtenez-lui des ZOOZ gratuits sur le <a href="https://faucet.testnet.coali.app">faucet</a> (nécessaires pour les frais d'une transaction). Collez son adresse ici :</span>
+  <input id="addr" placeholder="5…" oninput="mkCmd()" style="margin-top:8px">
+  <div class="out" id="cmdbox" style="display:none">
+    <span data-l="en">Then run this on the server: it creates your session keys inside the node and signs a proof that they belong to your account.</span>
+    <span data-l="fr">Puis lancez ceci sur le serveur : cela crée vos clés de session dans le nœud et signe la preuve qu'elles appartiennent à votre compte.</span>
+    <pre id="cmd"></pre>
+  </div>
+</li>
+<li>
+  <b class="t" data-l="en">Register your keys on chain</b><b class="t" data-l="fr">Enregistrez vos clés sur la chaîne</b>
+  <span data-l="en">Paste the full answer of the previous command (<code>{"jsonrpc":"2.0","result":{"keys":…,"proof":…}}</code>):</span>
+  <span data-l="fr">Collez la réponse complète de la commande précédente (<code>{"jsonrpc":"2.0","result":{"keys":…,"proof":…}}</code>) :</span>
+  <textarea id="res" rows="3" oninput="split()" style="margin-top:8px"></textarea>
+  <div class="out" id="splitbox" style="display:none">
+    <span data-l="en">Open the <a href="https://explorer.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorer › Developer › Extrinsics</a>, pick your validator account, choose <code>session</code> › <code>setKeys(keys, proof)</code> and fill in:</span>
+    <span data-l="fr">Ouvrez l'<a href="https://explorer.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorateur › Developer › Extrinsics</a>, choisissez votre compte validateur, sélectionnez <code>session</code> › <code>setKeys(keys, proof)</code> et remplissez :</span>
+    <p><b>keys › aura</b><br><span class="copy" id="aura" onclick="cp(this)"></span></p>
+    <p><b>keys › grandpa</b><br><span class="copy" id="gran" onclick="cp(this)"></span></p>
+    <p><b>proof</b><br><span class="copy" id="proof" onclick="cp(this)"></span></p>
+    <span data-l="en">Click <b>Submit Transaction</b> and sign in your wallet.</span>
+    <span data-l="fr">Cliquez sur <b>Submit Transaction</b> et signez dans votre portefeuille.</span>
+  </div>
+</li>
+<li>
+  <b class="t" data-l="en">Get linked to your verified Coali account</b><b class="t" data-l="fr">Faites-vous lier à votre compte Coali vérifié</b>
+  <span data-l="en">Send your validator address and your Popolitica / Coali username to the Coali team. We check that your account is identity-verified, then link your node to your trust address on chain. As soon as your account has received at least 1 public trust, you enter the validator set at the next session (5–10 minutes).</span>
+  <span data-l="fr">Envoyez votre adresse de validateur et votre nom d'utilisateur Popolitica / Coali à l'équipe Coali. Nous vérifions que votre compte est vérifié (KYC), puis nous lions votre nœud à votre adresse de trust sur la chaîne. Dès que votre compte a reçu au moins 1 trust public, vous entrez dans la liste des validateurs à la session suivante (5 à 10 minutes).</span>
+</li>
+<li>
+  <b class="t" data-l="en">Check you are validating</b><b class="t" data-l="fr">Vérifiez que vous validez</b>
+  <span data-l="en">In the explorer: Developer › Chain state › <code>session</code> › <code>validators()</code> — your address is in the list. Your node logs show <code>🎁 Prepared block for proposing</code>.</span>
+  <span data-l="fr">Dans l'explorateur : Developer › Chain state › <code>session</code> › <code>validators()</code> — votre adresse est dans la liste. Les logs de votre nœud affichent <code>🎁 Prepared block for proposing</code>.</span>
+</li>
+</ol>
+
+<h2 data-l="en">Good to know</h2><h2 data-l="fr">Bon à savoir</h2>
+<ul data-l="en">
+  <li>If your node produces no block for about 12 minutes, it is set aside automatically so it cannot slow the network. Once it runs again, come back with <code>proofOfTrust</code> › <code>goOnline()</code> in Developer › Extrinsics, signed by your validator account.</li>
+  <li>To leave: <code>proofOfTrust</code> › <code>withdraw()</code>.</li>
+  <li>Updates: <code>docker pull</code> / reload the new image when announced, then <code>docker restart coali</code>. Your keys stay in the <code>coali-data</code> volume — never delete it.</li>
+  <li>Never share your account recovery phrase. The Coali team will never ask for it.</li>
+</ul>
+<ul data-l="fr">
+  <li>Si votre nœud ne produit aucun bloc pendant environ 12 minutes, il est écarté automatiquement pour ne pas ralentir le réseau. Une fois relancé, revenez avec <code>proofOfTrust</code> › <code>goOnline()</code> dans Developer › Extrinsics, signé par votre compte validateur.</li>
+  <li>Pour partir : <code>proofOfTrust</code> › <code>withdraw()</code>.</li>
+  <li>Mises à jour : rechargez la nouvelle image quand elle est annoncée, puis <code>docker restart coali</code>. Vos clés restent dans le volume <code>coali-data</code> — ne le supprimez jamais.</li>
+  <li>Ne partagez jamais votre phrase de récupération. L'équipe Coali ne vous la demandera jamais.</li>
+</ul>
+<footer><a href="/">← testnet.coali.app</a></footer>
+</div>
+<script>
+function setLang(l){document.documentElement.lang=l;localStorage.lang=l;for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+setLang(localStorage.lang||((navigator.language||'').startsWith('fr')?'fr':'en'));
+function cp(el){navigator.clipboard.writeText(el.textContent)}
+function cpPre(b){navigator.clipboard.writeText(b.parentElement.textContent.replace(/^copy/,''));b.textContent='✓';setTimeout(()=>b.textContent='copy',1200)}
+const A='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function b58(s){let n=0n;for(const c of s){const i=A.indexOf(c);if(i<0)throw 0;n=n*58n+BigInt(i)}let h=n.toString(16);if(h.length%2)h='0'+h;let lead=0;for(const c of s){if(c==='1')lead++;else break}return '00'.repeat(lead)+h}
+function mkCmd(){
+  const v=document.getElementById('addr').value.trim(),box=document.getElementById('cmdbox');
+  try{const h=b58(v);if(h.length!==70)throw 0;const pk='0x'+h.slice(2,66);
+    document.getElementById('cmd').innerHTML='<button onclick="cpPre(this)">copy</button>'+`curl -s -H 'Content-Type: application/json' -d '{"id":1,"jsonrpc":"2.0","method":"author_rotateKeysWithOwner","params":["${pk}"]}' http://127.0.0.1:9944`;
+    box.style.display='block'}catch(e){box.style.display='none'}
+}
+function split(){
+  const box=document.getElementById('splitbox');
+  try{const r=JSON.parse(document.getElementById('res').value).result;const k=r.keys.slice(2);if(k.length!==128)throw 0;
+    document.getElementById('aura').textContent='0x'+k.slice(0,64);
+    document.getElementById('gran').textContent='0x'+k.slice(64);
+    document.getElementById('proof').textContent=r.proof;box.style.display='block'}catch(e){box.style.display='none'}
+}
+</script>
+</body>
+</html>
