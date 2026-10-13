@@ -89,8 +89,9 @@
 </footer>
 </div>
 <script>
-function setLang(l){document.documentElement.lang=l;localStorage.lang=l;b('en');b('fr');function b(x){document.getElementById('b-'+x).className=x===l?'on':''}}
-setLang(localStorage.lang||((navigator.language||'').startsWith('fr')?'fr':'en'));
+function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q==='fr'||q==='en')return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
+function setLang(l){document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+setLang(getLang());
 function cp(el){navigator.clipboard.writeText(el.textContent);const t=el.textContent;el.textContent='✓ copied / copié';setTimeout(()=>el.textContent=t,1200)}
 const RPC='https://rpc.testnet.coali.app';
 async function rpc(method,params=[]){const r=await fetch(RPC,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:1,jsonrpc:'2.0',method,params})});return (await r.json()).result}

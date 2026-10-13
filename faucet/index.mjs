@@ -51,51 +51,61 @@ const page = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Coalichain testnet faucet</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{--bg:#0b1020;--card:#141a2e;--line:#252d4a;--text:#e8ebf5;--muted:#9aa3c0;--accent:#7c5cff;--ok:#2fd18b;--err:#ff6b7a}
+:root{--bg:#0e1426;--card:#151c33;--line:#252d4a;--text:#e8ebf5;--muted:#9aa3c0;--accent:#7c5cff;--ok:#2fd18b;--err:#ff6b7a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-a{color:#a996ff}main{max-width:620px;margin:0 auto;padding:40px 18px 60px}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}.top a{text-decoration:none;color:var(--muted);font-size:14px}
-.logo{font-weight:700;font-size:18px;color:var(--text)!important}.logo span{color:var(--accent)}
+a{color:#a996ff}main{max-width:620px;margin:0 auto;padding:28px 18px 60px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;gap:10px}
+.logo{font-weight:800;font-size:19px;color:var(--text);text-decoration:none}.logo span{color:#a996ff}
+.lang button{background:none;border:1px solid var(--line);color:var(--muted);padding:5px 10px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px;width:auto;margin:0}
+.lang button.on{color:var(--text);border-color:var(--accent)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px}
-h1{font-size:26px;margin:0 0 6px}.fr{color:var(--muted);font-size:14px;margin-top:2px}
+h1{font-size:26px;margin:0 0 6px}
 label{display:block;font-size:14px;color:var(--muted);margin:18px 0 6px}
-input{width:100%;padding:13px 14px;font-size:15px;border-radius:10px;border:1px solid var(--line);background:#0e1426;color:var(--text)}
-button{margin-top:14px;width:100%;padding:13px;font-size:16px;font-weight:600;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
-button:disabled{opacity:.6;cursor:wait}
-#out{margin-top:18px;padding:14px;border-radius:10px;display:none;word-break:break-word}
+input{width:100%;padding:13px 14px;font-size:15px;border-radius:10px;border:1px solid var(--line);background:#0b1020;color:var(--text)}
+#b{margin-top:14px;width:100%;padding:13px;font-size:16px;font-weight:600;border:0;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+#b:disabled{opacity:.6;cursor:wait}
+#out{margin-top:18px;padding:14px 16px;border-radius:10px;display:none;word-break:break-word}
 #out.ok{display:block;background:rgba(47,209,139,.1);border:1px solid rgba(47,209,139,.4)}
 #out.err{display:block;background:rgba(255,107,122,.08);border:1px solid rgba(255,107,122,.4)}
-#out.wait{display:block;background:#0e1426;border:1px solid var(--line)}
+#out.wait{display:block;background:#0b1020;border:1px solid var(--line)}
+#out .row{display:flex;justify-content:space-between;gap:10px;font-size:14px;margin-top:6px}#out .row span:first-child{color:var(--muted)}
 .small{font-size:13px;color:var(--muted)}
+html[lang=en] [data-l=fr],html[lang=fr] [data-l=en]{display:none!important}
 </style></head><body><main>
 <div class="top"><a class="logo" href="https://testnet.coali.app">Coali<span>chain</span> testnet</a>
-<a href="https://testnet.coali.app">← Guide</a></div>
+<div class="lang"><button id="b-en" onclick="setLang('en')">EN</button> <button id="b-fr" onclick="setLang('fr')">FR</button></div></div>
 <div class="card">
-<h1>Get test ZOOZ</h1>
-<div class="fr">Recevez des ZOOZ de test</div>
-<p>Receive <b>${DRIP} ${symbol}</b> (Coalichain Token, test tokens with no value), once per day per address.</p>
-<p class="fr">Recevez <b>${DRIP} ${symbol}</b> (Coalichain Token, jetons de test sans valeur), une fois par jour et par adresse.</p>
-<label for="a">Your address (starts with 5…) · Votre adresse (commence par 5…)</label>
+<h1 data-l="en">Get test ZOOZ</h1><h1 data-l="fr">Recevez des ZOOZ de test</h1>
+<p data-l="en">Receive <b>${DRIP} ${symbol}</b> (Coalichain Token). Test tokens have no value. Once per day per address.</p>
+<p data-l="fr">Recevez <b>${DRIP} ${symbol}</b> (Coalichain Token). Les jetons de test n'ont aucune valeur. Une fois par jour et par adresse.</p>
+<label for="a"><span data-l="en">Your address (starts with 5…)</span><span data-l="fr">Votre adresse (commence par 5…)</span></label>
 <input id="a" placeholder="5…" autocomplete="off" spellcheck="false">
-<button id="b" onclick="go()">Send me ${DRIP} ${symbol} · Envoyez-moi ${DRIP} ${symbol}</button>
+<button id="b" onclick="go()"><span data-l="en">Send me ${DRIP} ${symbol}</span><span data-l="fr">Envoyez-moi ${DRIP} ${symbol}</span></button>
 <div id="out"></div>
 </div>
-<p class="small">No wallet yet? See step 1 of the <a href="https://testnet.coali.app">tester guide</a>. ·
-Pas encore de portefeuille ? Voir l'étape 1 du <a href="https://testnet.coali.app">guide</a>.</p>
+<p class="small" data-l="en">No wallet yet? See step 1 of the <a href="https://testnet.coali.app">tester guide</a>.</p>
+<p class="small" data-l="fr">Pas encore de portefeuille ? Voir l'étape 1 du <a href="https://testnet.coali.app">guide</a>.</p>
 </main>
 <script>
+function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q)return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
+function setLang(l){L=l;document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+let L;setLang(getLang()==='fr'?'fr':'en');
+const T={en:{sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See this transfer in the explorer',acct:'Network error, please retry.'},
+fr:{sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir ce transfert dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};
 const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function go(){
-  const o=document.getElementById('out'),b=document.getElementById('b'),a=document.getElementById('a').value.trim();
-  o.className='wait';o.textContent='Sending… · Envoi…';b.disabled=true;
+  const o=document.getElementById('out'),b=document.getElementById('b'),a=document.getElementById('a').value.trim(),t=T[L];
+  o.className='wait';o.textContent=t.sending;b.disabled=true;
   try{
     const r=await fetch('/drip',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address:a})});
     const j=await r.json();
-    if(r.ok){o.className='ok';o.innerHTML='<b>Sent! · Envoyé !</b><br>Balance · Solde : '+esc(j.balance)+
-      '<br><a href="'+esc(j.explorer)+'" target="_blank">View in explorer · Voir dans l\\'explorateur</a>';}
-    else{o.className='err';o.innerHTML=esc(j.en)+'<br><span class="fr">'+esc(j.fr)+'</span>'+
-      (j.explorer?'<br><a href="'+esc(j.explorer)+'" target="_blank">View your account · Voir votre compte</a>':'');}
-  }catch(e){o.className='err';o.textContent='Network error, please retry. · Erreur réseau, réessayez.';}
+    if(r.ok){o.className='ok';o.innerHTML='<b>✅ '+t.sent+'</b>'+
+      '<div class="row"><span>'+t.bal+'</span><span>'+esc(j.balance)+'</span></div>'+
+      '<div class="row"><span>'+t.block+'</span><span>#'+esc(j.blockNumber)+'</span></div>'+
+      '<div class="small" style="margin-top:8px">'+t.final+'</div>'+
+      '<div style="margin-top:8px"><a href="'+esc(j.explorer)+'" target="_blank">'+t.see+' →</a></div>';}
+    else{o.className='err';o.textContent=j[L]||j.en;}
+  }catch(e){o.className='err';o.textContent=t.acct;}
   b.disabled=false;
 }
 </script></body></html>`;
@@ -127,7 +137,6 @@ http
         fr: "Cette adresse n'est pas valide. Une adresse Coalichain commence en général par 5 (copiez-la depuis votre portefeuille).",
       });
     }
-    const explorer = `${EXPLORER}/#/accounts/${address}`;
     const ip = (req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
     const now = Date.now();
     const hoursLeft = (t) => Math.max(1, Math.ceil((t + DAY - now) / 3600000));
@@ -140,7 +149,6 @@ http
         en: `Good news: this address already received ${symbol} today, so you already have tokens (current balance: ${balance}). You can ask again in about ${h} h.`,
         fr: `Bonne nouvelle : cette adresse a déjà reçu des ${symbol} aujourd'hui, vous avez donc déjà des jetons (solde actuel : ${balance}). Vous pourrez redemander dans environ ${h} h.`,
         balance,
-        explorer,
       });
     }
     const fromIp = (dripsByIp.get(ip) ?? []).filter((t) => now - t < DAY);
@@ -155,7 +163,13 @@ http
       const r = await drip(address);
       lastByAddress.set(address, now);
       dripsByIp.set(ip, [...fromIp, now]);
-      json(res, 200, { ...r, balance: await balanceOf(address).catch(() => "?"), explorer });
+      const blockNumber = (await api.rpc.chain.getHeader(r.block)).number.toNumber();
+      json(res, 200, {
+        ...r,
+        blockNumber,
+        balance: await balanceOf(address).catch(() => "?"),
+        explorer: `${EXPLORER}/?rpc=wss://rpc.testnet.coali.app#/explorer/query/${r.block}`,
+      });
     } catch (e) {
       json(res, 500, {
         en: `Sending failed, please try again in a few minutes. (${e.message})`,

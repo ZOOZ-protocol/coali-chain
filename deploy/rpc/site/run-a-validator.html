@@ -104,8 +104,9 @@ docker run -d --name coali --restart unless-stopped \
 <footer><a href="/">← testnet.coali.app</a></footer>
 </div>
 <script>
-function setLang(l){document.documentElement.lang=l;localStorage.lang=l;for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
-setLang(localStorage.lang||((navigator.language||'').startsWith('fr')?'fr':'en'));
+function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q==='fr'||q==='en')return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
+function setLang(l){document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+setLang(getLang());
 function cp(el){navigator.clipboard.writeText(el.textContent)}
 function cpPre(b){navigator.clipboard.writeText(b.parentElement.textContent.replace(/^copy/,''));b.textContent='✓';setTimeout(()=>b.textContent='copy',1200)}
 const A='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
