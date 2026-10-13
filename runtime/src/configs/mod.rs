@@ -170,13 +170,14 @@ impl pallet_sudo::Config for Runtime {
 }
 
 parameter_types! {
-	/// 10 minutes at 6-second blocks.
-	pub const SessionPeriod: BlockNumber = 100;
+	/// 5 minutes at 6-second blocks.
+	pub const SessionPeriod: BlockNumber = 50;
 	pub const SessionOffset: BlockNumber = 0;
 	pub const PotMaxValidators: u32 = 32;
 	pub const PotMaxCandidates: u32 = 256;
-	/// Three sessions: a newly selected validator starts one session later.
-	pub const PotOfflineAfter: BlockNumber = 300;
+	/// A newly selected validator starts one session later, then has a full session
+	/// (at least one Aura slot, since MaxValidators < SessionPeriod) to author.
+	pub const PotOfflineAfter: BlockNumber = 120;
 }
 
 impl pallet_authorship::Config for Runtime {

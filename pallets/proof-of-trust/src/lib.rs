@@ -3,15 +3,17 @@
 //! Chooses the block producers (Aura) and finality voters (GRANDPA) at every session,
 //! through `pallet_session::SessionManager`. No stake is involved:
 //!
-//! - **Founders** (set at genesis, managed by the admin origin) always validate; they
-//!   bootstrap the network.
+//! - **Founders** (set at genesis, managed by the admin origin) validate without trust
+//!   requirements; they bootstrap the network.
 //! - **Candidates** are people: an attester (the Coali server) vouches that a trust
 //!   address belongs to an identity-verified user, then links it to one validator
 //!   account. One validator per person.
 //! - A candidate validates while its trust address is trusted by at least `MinTrust`
 //!   distinct accounts on chain (public trusts recorded by `pallet-coali-ledger`).
-//! - Liveness: a selected candidate that authored no block for `OfflineAfter` blocks is
-//!   set aside until its validator account calls `go_online`.
+//! - Liveness: a selected validator (founder or candidate) that authored no block for
+//!   `OfflineAfter` blocks is set aside until its account calls `go_online`, so dead nodes
+//!   cannot keep GRANDPA below its 2/3 threshold. If every validator is offline, the
+//!   founders are kept.
 //!
 //! Validators still need session keys (`session.set_keys`); without keys,
 //! `pallet_session` leaves them out.
@@ -176,6 +178,9 @@ pub mod pallet {
 				f.remove(pos);
 				Ok::<_, Error<T>>(())
 			})?;
+			Offline::<T>::remove(&who);
+			SelectedSince::<T>::remove(&who);
+			LastAuthored::<T>::remove(&who);
 			Self::deposit_event(Event::FounderRemoved { who });
 			Ok(())
 		}
@@ -243,12 +248,12 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// A candidate set offline asks to be selected again.
+		/// A validator (candidate or founder) set offline asks to be selected again.
 		#[pallet::call_index(7)]
 		#[pallet::weight(Weight::from_parts(BASE, 2_000).saturating_add(T::DbWeight::get().reads_writes(2, 1)))]
 		pub fn go_online(origin: OriginFor<T>) -> DispatchResult {
 			let validator = ensure_signed(origin)?;
-			ensure!(Candidates::<T>::contains_key(&validator), Error::<T>::NotCandidate);
+			ensure!(Self::is_validator(&validator), Error::<T>::NotCandidate);
 			ensure!(Offline::<T>::take(&validator).is_some(), Error::<T>::NotOffline);
 			Self::deposit_event(Event::CandidateOnline { validator });
 			Ok(())
@@ -275,10 +280,35 @@ pub mod pallet {
 			}) && !Offline::<T>::contains_key(validator)
 		}
 
-		/// Founders, then eligible candidates by decreasing trust, capped at MaxValidators.
+		/// Liveness check for a validator that would be selected now. Returns false (and sets
+		/// it offline) when it authored nothing for `OfflineAfter` blocks while selected.
+		fn still_alive(validator: &T::AccountId, now: BlockNumberFor<T>) -> bool {
+			if Offline::<T>::contains_key(validator) {
+				return false;
+			}
+			match SelectedSince::<T>::get(validator) {
+				Some(since) => {
+					let last = LastAuthored::<T>::get(validator).map_or(since, |s| s.max(since));
+					if now.saturating_sub(last) > T::OfflineAfter::get() {
+						Offline::<T>::insert(validator, ());
+						SelectedSince::<T>::remove(validator);
+						Self::deposit_event(Event::CandidateOffline { validator: validator.clone() });
+						return false;
+					}
+				},
+				None => SelectedSince::<T>::insert(validator, now),
+			}
+			true
+		}
+
+		/// Live founders, then eligible live candidates by decreasing trust, capped at
+		/// MaxValidators. Offline validators are left out so that they cannot stall GRANDPA
+		/// finality; if nobody is left, all founders are kept.
 		pub fn select(session: SessionIndex) -> Vec<T::AccountId> {
 			let now = frame_system::Pallet::<T>::block_number();
-			let founders = Founders::<T>::get().into_inner();
+			let all_founders = Founders::<T>::get().into_inner();
+			let founders: Vec<T::AccountId> =
+				all_founders.iter().filter(|f| Self::still_alive(f, now)).cloned().collect();
 			let mut picked: Vec<(u32, T::AccountId)> = Vec::new();
 
 			for (validator, trust_address) in Candidates::<T>::iter() {
@@ -286,18 +316,8 @@ pub mod pallet {
 					SelectedSince::<T>::remove(&validator);
 					continue;
 				}
-				let since = SelectedSince::<T>::get(&validator);
-				let seen = LastAuthored::<T>::get(&validator);
-				if let Some(since) = since {
-					let last = seen.map_or(since, |s| s.max(since));
-					if now.saturating_sub(last) > T::OfflineAfter::get() {
-						Offline::<T>::insert(&validator, ());
-						SelectedSince::<T>::remove(&validator);
-						Self::deposit_event(Event::CandidateOffline { validator });
-						continue;
-					}
-				} else {
-					SelectedSince::<T>::insert(&validator, now);
+				if !Self::still_alive(&validator, now) {
+					continue;
 				}
 				picked.push((T::TrustScore::trust_received(&trust_address), validator));
 			}
@@ -305,12 +325,30 @@ pub mod pallet {
 			picked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 			let room = (T::MaxValidators::get() as usize).saturating_sub(founders.len());
 			let candidates = picked.len().min(room);
+
+			if founders.is_empty() && candidates == 0 {
+				for f in &all_founders {
+					Offline::<T>::remove(f);
+					SelectedSince::<T>::insert(f, now);
+				}
+				Self::deposit_event(Event::ValidatorsPlanned {
+					session,
+					founders: all_founders.len() as u32,
+					candidates: 0,
+				});
+				return all_founders;
+			}
+
 			Self::deposit_event(Event::ValidatorsPlanned {
 				session,
 				founders: founders.len() as u32,
 				candidates: candidates as u32,
 			});
 			founders.into_iter().chain(picked.into_iter().take(room).map(|(_, v)| v)).collect()
+		}
+
+		fn is_validator(who: &T::AccountId) -> bool {
+			Candidates::<T>::contains_key(who) || Founders::<T>::get().contains(who)
 		}
 	}
 
@@ -329,7 +367,7 @@ pub mod pallet {
 
 	impl<T: Config> pallet_authorship::EventHandler<T::AccountId, BlockNumberFor<T>> for Pallet<T> {
 		fn note_author(author: T::AccountId) {
-			if Candidates::<T>::contains_key(&author) {
+			if Self::is_validator(&author) {
 				LastAuthored::<T>::insert(&author, frame_system::Pallet::<T>::block_number());
 			}
 		}

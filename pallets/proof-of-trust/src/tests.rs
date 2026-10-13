@@ -88,7 +88,9 @@ fn silent_candidates_go_offline_until_they_come_back() {
 		assert_eq!(planned(), vec![1, 2, 20, 21]);
 
 		System::set_block_number(25);
-		ProofOfTrust::note_author(20);
+		for author in [1, 2, 20] {
+			ProofOfTrust::note_author(author);
+		}
 		System::set_block_number(40);
 		assert_eq!(planned(), vec![1, 2, 20]);
 		assert!(Offline::<Test>::contains_key(21));
@@ -96,6 +98,31 @@ fn silent_candidates_go_offline_until_they_come_back() {
 		assert_noop!(ProofOfTrust::go_online(RuntimeOrigin::signed(20)), Error::<Test>::NotOffline);
 		assert_ok!(ProofOfTrust::go_online(RuntimeOrigin::signed(21)));
 		assert_eq!(planned(), vec![1, 2, 20, 21]);
+	});
+}
+
+#[test]
+fn silent_founders_go_offline_too() {
+	new_test_ext().execute_with(|| {
+		assert_eq!(planned(), vec![1, 2]);
+		System::set_block_number(25);
+		ProofOfTrust::note_author(1);
+		System::set_block_number(40);
+		assert_eq!(planned(), vec![1]);
+		assert!(Offline::<Test>::contains_key(2));
+		assert_ok!(ProofOfTrust::go_online(RuntimeOrigin::signed(2)));
+		assert_eq!(planned(), vec![1, 2]);
+	});
+}
+
+#[test]
+fn founders_are_kept_when_everyone_is_offline() {
+	new_test_ext().execute_with(|| {
+		assert_eq!(planned(), vec![1, 2]);
+		System::set_block_number(40);
+		assert_eq!(planned(), vec![1, 2]);
+		assert!(!Offline::<Test>::contains_key(1));
+		assert!(!Offline::<Test>::contains_key(2));
 	});
 }
 
