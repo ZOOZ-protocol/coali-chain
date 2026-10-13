@@ -7,7 +7,10 @@ rpc.{$DOMAIN} {
 }
 
 explorer.{$DOMAIN} {
-	@root path /
+	@root {
+		path /
+		not query rpc=*
+	}
 	redir @root /?rpc=wss://rpc.{$DOMAIN}#/explorer
 	reverse_proxy explorer:80
 }
