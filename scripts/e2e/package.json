@@ -1,0 +1,12 @@
+{
+  "name": "coali-chain-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": { "e2e": "node e2e.mjs" },
+  "dependencies": {
+    "@polkadot/api": "^17.0.2",
+    "@polkadot/keyring": "^14.0.3",
+    "@polkadot/util": "^14.0.3",
+    "@polkadot/util-crypto": "^14.0.3"
+  }
+}

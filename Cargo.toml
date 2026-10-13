@@ -8,7 +8,7 @@ edition = "2021"
 [workspace]
 members = [
     "node",
-    "pallets/template",
+    "pallets/coali-ledger",
     "runtime",
 ]
 resolver = "2"
@@ -31,7 +31,7 @@ pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "p
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
-pallet-template = { path = "./pallets/template", default-features = false }
+pallet-coali-ledger = { path = "./pallets/coali-ledger", default-features = false }
 pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-transaction-payment-rpc = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }

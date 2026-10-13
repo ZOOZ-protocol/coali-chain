@@ -169,8 +169,16 @@ impl pallet_sudo::Config for Runtime {
 	type WeightInfo = pallet_sudo::weights::SubstrateWeight<Runtime>;
 }
 
-/// Configure the pallet-template in pallets/template.
-impl pallet_template::Config for Runtime {
+parameter_types! {
+	/// Domain separator mixed into every voter/truster signature; must differ per network.
+	pub const CoaliChainTag: [u8; 8] = *b"coali-01";
+}
+
+impl pallet_coali_ledger::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
-	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
+	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+	type Signature = super::Signature;
+	type Signer = <super::Signature as sp_runtime::traits::Verify>::Signer;
+	type ChainTag = CoaliChainTag;
+	type WeightInfo = ();
 }

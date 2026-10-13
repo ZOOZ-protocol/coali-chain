@@ -216,7 +216,7 @@ mod runtime {
 	#[runtime::pallet_index(6)]
 	pub type Sudo = pallet_sudo;
 
-	// Include the custom logic from the pallet-template in the runtime.
+	// Coali proof ledger: decisions, vote commitments, trust events, tally snapshots.
 	#[runtime::pallet_index(7)]
-	pub type Template = pallet_template;
+	pub type CoaliLedger = pallet_coali_ledger;
 }

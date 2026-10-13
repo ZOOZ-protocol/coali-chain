@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{AccountId, BalancesConfig, RuntimeGenesisConfig, SudoConfig};
+use crate::{AccountId, BalancesConfig, CoaliLedgerConfig, RuntimeGenesisConfig, SudoConfig};
 use alloc::{vec, vec::Vec};
 use frame_support::build_struct_json_patch;
 use serde_json::Value;
@@ -44,7 +44,8 @@ fn testnet_genesis(
 		grandpa: pallet_grandpa::GenesisConfig {
 			authorities: initial_authorities.iter().map(|x| (x.1.clone(), 1)).collect::<Vec<_>>(),
 		},
-		sudo: SudoConfig { key: Some(root) },
+		sudo: SudoConfig { key: Some(root.clone()) },
+		coali_ledger: CoaliLedgerConfig { attesters: vec![root] },
 	})
 }
 

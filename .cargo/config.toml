@@ -1,0 +1,4 @@
+[env]
+LIBCLANG_PATH = "/Library/Developer/CommandLineTools/usr/lib"
+DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
+PROTOC = "/Users/lev2025/.local/protoc/bin/protoc"
