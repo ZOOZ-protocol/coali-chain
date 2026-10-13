@@ -2,7 +2,7 @@
 name = "pallet-coali-ledger"
 description = "Coali proof ledger: decisions, signed vote commitments, trust events and tally snapshots."
 version = "0.1.0"
-license = "Apache-2.0"
+license = "BUSL-1.1"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true

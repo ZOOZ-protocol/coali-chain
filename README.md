@@ -59,4 +59,10 @@ Public testnet, 3 founder validators (Falkenstein, Nuremberg, Helsinki). Not aud
 
 ## License
 
-Apache-2.0 — © ZOOZ Protocol. See [LICENSE](LICENSE).
+[Business Source License 1.1](LICENSE) — © 2026 ZOOZ Protocol.
+
+- You may read, audit, modify and test this code, run nodes and validators on the official Coalichain networks, and build apps, wallets and tools for them.
+- You may not use it to launch or operate another blockchain network.
+- On **2029-10-13** the code automatically becomes open source under the Apache License 2.0.
+
+Third-party dependencies (including the Polkadot SDK) keep their own licenses.
