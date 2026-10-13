@@ -56,3 +56,7 @@ Or with Docker: `docker build -t coali-node .`
 ## Status
 
 Public testnet, 3 founder validators (Falkenstein, Nuremberg, Helsinki). Not audited yet — do not use for anything of value.
+
+## License
+
+Apache-2.0 — © ZOOZ Protocol. See [LICENSE](LICENSE).

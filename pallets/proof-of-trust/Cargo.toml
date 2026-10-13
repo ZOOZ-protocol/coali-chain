@@ -2,7 +2,7 @@
 name = "pallet-proof-of-trust"
 description = "Coali proof of trust: validators are identity-attested people trusted by enough others."
 version = "0.1.0"
-license = "MIT-0"
+license = "Apache-2.0"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
