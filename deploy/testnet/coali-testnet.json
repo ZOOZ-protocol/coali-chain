@@ -10,7 +10,7 @@
   "telemetryEndpoints": null,
   "protocolId": "coali-testnet",
   "properties": {
-    "tokenSymbol": "COALI",
+    "tokenSymbol": "ZOOZ",
     "tokenDecimals": 12,
     "ss58Format": 42
   },

@@ -28,7 +28,7 @@ spec["name"] = f"Coali {net.capitalize()}"
 spec["id"] = f"coali_{net}"
 spec["chainType"] = "Live"
 spec["protocolId"] = f"coali-{net}"
-spec["properties"] = {"tokenSymbol": "COALI", "tokenDecimals": 12, "ss58Format": 42}
+spec["properties"] = {"tokenSymbol": "ZOOZ", "tokenDecimals": 12, "ss58Format": 42}
 spec["bootNodes"] = [f"/dns/{h}/tcp/30333/p2p/{v['peer_id']}" for h, v in zip(hosts, vals)]
 
 patch = spec["genesis"]["runtimeGenesis"]["patch"]
