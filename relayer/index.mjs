@@ -1,7 +1,8 @@
 // Coali relayer: Supabase chain_outbox -> coali-ledger pallet.
 //
-// Each tick: chain_outbox_enqueue(network), then send pending rows in id order
-// (decisions, votes, snapshots) and write status, address, tx and block back.
+// Each tick: chain_outbox_enqueue(network) and chain_outbox_enqueue_trust(network),
+// then send pending rows in id order (decisions, votes, snapshots, public trusts)
+// and write status, address, tx and block back.
 // Every write is checked against chain state first, so a crash or a retry never
 // produces a duplicate: a row already on chain is just marked confirmed.
 //
@@ -103,6 +104,20 @@ const keyring = new Keyring({ type: "sr25519", ss58Format: api.registry.chainSS5
 const attester = keyring.addFromUri(env("ATTESTER_URI"));
 const MASTER = env("VOTER_MASTER_SEED");
 const voterKey = (userId, decisionId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//vote//${decisionId}`);
+const trustKey = (userId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//trust`);
+const ACTION_INDEX = { Give: 0, Revoke: 1 };
+
+function trustPayload(trusterPub, trustedPub, categoryId, action, nonce) {
+  return u8aConcat(
+    compactAddLength(stringToU8a("coali/trust/v1")),
+    CHAIN_TAG,
+    trusterPub,
+    trustedPub,
+    api.createType("u32", categoryId).toU8a(),
+    new Uint8Array([ACTION_INDEX[action]]),
+    api.createType("u32", nonce).toU8a(),
+  );
+}
 
 if (!(await api.query.coaliLedger.attesters(attester.address)).isSome) {
   throw new Error(`${attester.address} is not an attester on this chain`);
@@ -128,8 +143,31 @@ async function blockNumber(hash) {
 }
 
 // Returns { tx } to send, or { done: result } if the row is already on chain.
-async function prepare(row) {
+// trustNonces: per-tick map truster address -> next nonce, so one truster can
+// have several trust rows in the same tick.
+async function prepare(row, trustNonces) {
   const p = row.payload;
+  if (row.kind === "trust") {
+    const truster = trustKey(p.truster_id);
+    const trusted = trustKey(p.trusted_id);
+    const result = { truster_public: u8aToHex(truster.publicKey), trusted_public: u8aToHex(trusted.publicKey) };
+    const extra = { chain_address: truster.address };
+    const exists = (await api.query.coaliLedger.trustEdges(truster.address, trusted.address, p.category_id)).isSome;
+    if ((p.action === "Give") === exists) return { done: result, extra };
+    if (!trustNonces.has(truster.address)) {
+      trustNonces.set(truster.address, (await api.query.coaliLedger.trustNonces(truster.address)).toNumber());
+    }
+    const nonce = trustNonces.get(truster.address);
+    trustNonces.set(truster.address, nonce + 1);
+    const signature = {
+      Sr25519: truster.sign(trustPayload(truster.publicKey, trusted.publicKey, p.category_id, p.action, nonce)),
+    };
+    return {
+      tx: api.tx.coaliLedger.recordTrust(truster.address, trusted.address, p.category_id, p.action, nonce, signature),
+      result: { ...result, nonce },
+      extra,
+    };
+  }
   if (row.kind === "decision") {
     const hash = contentHash(p.content);
     const result = { content_hash: u8aToHex(hash) };
@@ -171,18 +209,21 @@ async function tick() {
     console.log(`[${NETWORK}] publication disabled (platform_settings.chain_ledger.enabled_networks)`);
     return;
   }
+  const enqTrust = await rest("rpc/chain_outbox_enqueue_trust", { method: "POST", body: { p_network: NETWORK } });
+  enq.trusts = enqTrust?.trusts ?? 0;
   const rows = await rest(
     `chain_outbox?select=*&network=eq.${NETWORK}&status=in.(pending,sent,failed)&attempts=lt.${MAX_ATTEMPTS}&order=id.asc&limit=${BATCH}`,
   );
   if (rows.length === 0) return;
 
   let nonce = (await api.rpc.system.accountNextIndex(attester.address)).toNumber();
+  const trustNonces = new Map();
   const inflight = [];
   for (const row of rows) {
     // Snapshots need the votes before them on chain; leave them for the next tick.
     if (row.kind === "snapshot" && inflight.some((f) => f.row.decision_id === row.decision_id)) continue;
     try {
-      const prep = await prepare(row);
+      const prep = await prepare(row, trustNonces);
       if (prep.done) {
         await updateRow(row.id, { status: "confirmed", result: prep.done, last_error: null, ...prep.extra });
         continue;
