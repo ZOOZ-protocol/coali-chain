@@ -17,8 +17,13 @@
 
 use crate::{
 	AccountId, BalancesConfig, CoaliLedgerConfig, ProofOfTrustConfig, RuntimeGenesisConfig, SessionConfig,
-	SessionKeys, SudoConfig,
+	SessionKeys, SudoConfig, ZoozEconomyConfig, UNIT,
 };
+
+/// 770M ZOOZ cap minus the 10,356,360 already burned on BSC.
+pub const TOTAL_SUPPLY: u128 = 759_643_640 * UNIT;
+const ENDOWMENT: u128 = 1_000_000 * UNIT;
+
 use alloc::{vec, vec::Vec};
 use frame_support::build_struct_json_patch;
 use serde_json::Value;
@@ -35,11 +40,22 @@ fn testnet_genesis(
 ) -> Value {
 	build_struct_json_patch!(RuntimeGenesisConfig {
 		balances: BalancesConfig {
-			balances: endowed_accounts
-				.iter()
-				.cloned()
-				.map(|k| (k, 1u128 << 60))
-				.collect::<Vec<_>>(),
+			balances: endowed_accounts.iter().cloned().map(|k| (k, ENDOWMENT)).collect::<Vec<_>>(),
+		},
+		// White paper split; test endowments are carved out of Development.
+		zooz_economy: ZoozEconomyConfig {
+			price_micro_usd: 246_900,
+			target_fee_micro_usd: 50_000,
+			author_percent: 60,
+			foundation_percent: 20,
+			block_reward: 5 * UNIT / 2,
+			halving_interval: 21_000_000,
+			foundation: Some(root.clone()),
+			fuel: TOTAL_SUPPLY * 65 / 100,
+			development: TOTAL_SUPPLY * 10 / 100 - ENDOWMENT * endowed_accounts.len() as u128,
+			investors: TOTAL_SUPPLY * 3 / 100,
+			team: TOTAL_SUPPLY * 12 / 100,
+			charity: TOTAL_SUPPLY * 10 / 100,
 		},
 		// Aura and GRANDPA authorities come from the session keys of the founders.
 		session: SessionConfig {

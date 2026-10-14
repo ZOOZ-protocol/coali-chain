@@ -60,6 +60,7 @@ frame-system-benchmarking = { optional = true, workspace = true }
 # The pallet in this template.
 pallet-coali-ledger = { workspace = true }
 pallet-proof-of-trust = { workspace = true }
+pallet-zooz-economy = { workspace = true }
 pallet-session = { workspace = true }
 pallet-authorship = { workspace = true }
 
@@ -84,6 +85,7 @@ std = [
 	"pallet-sudo/std",
 	"pallet-coali-ledger/std",
 	"pallet-proof-of-trust/std",
+	"pallet-zooz-economy/std",
 	"pallet-session/std",
 	"pallet-authorship/std",
 	"pallet-timestamp/std",
@@ -117,6 +119,7 @@ runtime-benchmarks = [
 	"pallet-sudo/runtime-benchmarks",
 	"pallet-coali-ledger/runtime-benchmarks",
 	"pallet-proof-of-trust/runtime-benchmarks",
+	"pallet-zooz-economy/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",
 	"pallet-timestamp/runtime-benchmarks",
 	"pallet-transaction-payment/runtime-benchmarks",
@@ -133,6 +136,7 @@ try-runtime = [
 	"pallet-sudo/try-runtime",
 	"pallet-coali-ledger/try-runtime",
 	"pallet-proof-of-trust/try-runtime",
+	"pallet-zooz-economy/try-runtime",
 	"pallet-session/try-runtime",
 	"pallet-authorship/try-runtime",
 	"pallet-timestamp/try-runtime",

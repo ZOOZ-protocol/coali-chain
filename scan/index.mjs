@@ -53,7 +53,7 @@ const chainName = (await api.rpc.system.chain()).toString();
 const props = await api.rpc.system.properties();
 const token = {
   symbol: props.tokenSymbol.unwrapOr([])[0]?.toString() ?? "ZOOZ",
-  decimals: props.tokenDecimals.unwrapOr([])[0]?.toNumber() ?? 12,
+  decimals: props.tokenDecimals.unwrapOr([])[0]?.toNumber() ?? 9,
 };
 
 const isAccount = (codec) => /^AccountId(32)?$/.test(codec?.toRawType?.() ?? "");

@@ -31,11 +31,11 @@ use frame_support::{
 	traits::{ConstBool, ConstU128, ConstU32, ConstU64, ConstU8, VariantCountOf},
 	weights::{
 		constants::{RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND},
-		IdentityFee, Weight,
+		Weight,
 	},
 };
 use frame_system::limits::{BlockLength, BlockWeights};
-use pallet_transaction_payment::{ConstFeeMultiplier, FungibleAdapter, Multiplier};
+use pallet_transaction_payment::{ConstFeeMultiplier, Multiplier};
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_runtime::{traits::One, Perbill};
 use sp_version::RuntimeVersion;
@@ -44,7 +44,7 @@ use sp_version::RuntimeVersion;
 use super::{
 	AccountId, Aura, Balance, Balances, Block, BlockNumber, Hash, Nonce, PalletInfo, Runtime,
 	RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask,
-	ProofOfTrust, System, EXISTENTIAL_DEPOSIT, SLOT_DURATION, VERSION,
+	Authorship, ProofOfTrust, System, EXISTENTIAL_DEPOSIT, SLOT_DURATION, UNIT, VERSION,
 };
 
 const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
@@ -155,10 +155,10 @@ parameter_types! {
 
 impl pallet_transaction_payment::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
-	type OnChargeTransaction = FungibleAdapter<Balances, ()>;
+	type OnChargeTransaction = pallet_zooz_economy::ZoozFeeAdapter<Runtime>;
 	type OperationalFeeMultiplier = ConstU8<5>;
-	type WeightToFee = IdentityFee<Balance>;
-	type LengthToFee = IdentityFee<Balance>;
+	type WeightToFee = pallet_zooz_economy::WeightToFee<Runtime>;
+	type LengthToFee = pallet_zooz_economy::LengthToFee<Runtime>;
 	type FeeMultiplierUpdate = ConstFeeMultiplier<FeeMultiplier>;
 	type WeightInfo = pallet_transaction_payment::weights::SubstrateWeight<Runtime>;
 }
@@ -222,4 +222,35 @@ impl pallet_coali_ledger::Config for Runtime {
 	type Signer = <super::Signature as sp_runtime::traits::Verify>::Signer;
 	type ChainTag = CoaliChainTag;
 	type WeightInfo = ();
+}
+
+pub struct CurrentAuthor;
+impl frame_support::traits::Get<Option<AccountId>> for CurrentAuthor {
+	fn get() -> Option<AccountId> {
+		Authorship::author()
+	}
+}
+
+/// Apps approved by the foundation are the ledger attesters.
+pub struct ApprovedApps;
+impl frame_support::traits::Contains<AccountId> for ApprovedApps {
+	fn contains(who: &AccountId) -> bool {
+		pallet_coali_ledger::Attesters::<Runtime>::contains_key(who)
+	}
+}
+
+parameter_types! {
+	/// Total weight of a `record_vote` extrinsic (~908M) plus its length fee (~7.5%):
+	/// a vote then costs the target fee.
+	pub const ZoozReferenceWeight: u64 = 980_000_000;
+}
+
+impl pallet_zooz_economy::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Currency = Balances;
+	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+	type BlockAuthor = CurrentAuthor;
+	type IsApp = ApprovedApps;
+	type Unit = ConstU128<UNIT>;
+	type ReferenceWeight = ZoozReferenceWeight;
 }

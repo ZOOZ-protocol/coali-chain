@@ -28,7 +28,7 @@ spec["name"] = f"Coali {net.capitalize()}"
 spec["id"] = f"coali_{net}"
 spec["chainType"] = "Live"
 spec["protocolId"] = f"coali-{net}"
-spec["properties"] = {"tokenSymbol": "ZOOZ", "tokenDecimals": 12, "ss58Format": 42}
+spec["properties"] = {"tokenSymbol": "ZOOZ", "tokenDecimals": 9, "ss58Format": 42}
 spec["bootNodes"] = [f"/dns/{h}/tcp/30333/p2p/{v['peer_id']}" for h, v in zip(hosts, vals)]
 
 patch = spec["genesis"]["runtimeGenesis"]["patch"]
@@ -39,9 +39,24 @@ patch["session"] = {"keys": [[v["aura"], v["aura"], {"aura": v["aura"], "grandpa
 patch["proofOfTrust"] = {"founders": [v["aura"] for v in vals], "minTrust": 1}
 patch["sudo"] = {"key": auth["sudo"]}
 patch["coaliLedger"] = {"attesters": auth["attesters"]}
-# Sudo, the attesters, the faucet and the founders hold the initial test tokens.
-funded = [auth["sudo"], *auth["attesters"], auth["faucet"], *[v["aura"] for v in vals]]
-patch["balances"] = {"balances": [[a, 1 << 60] for a in dict.fromkeys(funded)]}
+# 770M cap minus the 10,356,360 ZOOZ burned on BSC, split as in the white paper.
+UNIT = 10**9
+TOTAL = 759_643_640 * UNIT
+funded = {}
+for a, amount in [(auth["sudo"], 1_000_000), *[(a, 1_000_000) for a in auth["attesters"]],
+                  (auth["faucet"], 5_000_000), *[(v["aura"], 10_000) for v in vals]]:
+    funded.setdefault(a, amount * UNIT)
+patch["balances"] = {"balances": [[a, b] for a, b in funded.items()]}
+patch["zoozEconomy"] = {
+    "priceMicroUsd": 246_900, "targetFeeMicroUsd": 50_000,
+    "authorPercent": 60, "foundationPercent": 20,
+    "blockReward": 5 * UNIT // 2, "halvingInterval": 21_000_000,
+    "foundation": auth["sudo"], "oracle": None,
+    "fuel": TOTAL * 65 // 100,
+    # Test endowments are carved out of Development.
+    "development": TOTAL * 10 // 100 - sum(funded.values()),
+    "investors": TOTAL * 3 // 100, "team": TOTAL * 12 // 100, "charity": TOTAL * 10 // 100,
+}
 print(json.dumps(spec, indent=2))
 EOF
 rm "$PLAIN.tmp"

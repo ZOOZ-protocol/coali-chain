@@ -1,8 +1,8 @@
 [workspace.package]
 license = "BUSL-1.1"
-authors = ["Coalichain Ltd"]
+authors = ["ZOOZ Protocol"]
 homepage = "https://coali.app"
-repository = "https://github.com/coalichain/coali-chain"
+repository = "https://github.com/ZOOZ-protocol/coali-chain"
 edition = "2021"
 
 [workspace]
@@ -10,6 +10,7 @@ members = [
     "node",
     "pallets/coali-ledger",
     "pallets/proof-of-trust",
+    "pallets/zooz-economy",
     "runtime",
 ]
 resolver = "2"
@@ -34,6 +35,7 @@ pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag =
 pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-coali-ledger = { path = "./pallets/coali-ledger", default-features = false }
 pallet-proof-of-trust = { path = "./pallets/proof-of-trust", default-features = false }
+pallet-zooz-economy = { path = "./pallets/zooz-economy", default-features = false }
 pallet-session = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-authorship = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-staking = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
