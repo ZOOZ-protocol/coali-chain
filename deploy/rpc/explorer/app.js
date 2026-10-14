@@ -191,7 +191,7 @@ function explain(x) {
       case "coaliLedger.VoteRecorded":
         out.push(`<p class="lead">🗳️ ${t("An anonymous vote was recorded on decision", "Un vote anonyme a été enregistré sur la décision")} ${decLink(d.decisionId, 8)}.</p>
           <p>${t("The voter signed with a <b>one-time address</b>", "Le votant a signé avec une <b>adresse à usage unique</b>")} (${addr(d.voter)}) ${t("created only for this vote: nobody can link it to a person.", "créée uniquement pour ce vote : personne ne peut la relier à une personne.")}</p>
-          <p>${t("The choice is <b>sealed</b> 🔒: the commitment", "Le choix est <b>scellé</b> 🔒 : l'engagement")} <span class="mono sm">${esc(short(d.commitment, 10))}</span> ${t("is a fingerprint of (decision + choice + a secret known only to the voter). The vote counts in the results, and only the voter can later prove what they chose.", "est une empreinte de (décision + choix + un secret connu du seul votant). Le vote compte dans les résultats, et seul le votant peut prouver plus tard ce qu'il a choisi.")}</p>
+          <p>${t("The choice is <b>sealed</b> 🔒: the commitment", "Le choix est <b>scellé</b> 🔒 : l'engagement")} <span class="mono sm">${esc(short(d.commitment, 10))}</span> ${t("is a fingerprint of (decision + choice + a secret known only to the voter). The vote counts in the results. The voter finds the proof of their choice in their app (\"My blockchain proofs\") and can check it here.", "est une empreinte de (décision + choix + un secret connu du seul votant). Le vote compte dans les résultats. Le votant retrouve la preuve de son choix dans son app (« Mes preuves Blockchain ») et peut la vérifier ici.")}</p>
           <p>${t("Type", "Type")} : ${JSON.stringify(d.kind).includes("Inferred") ? t("<b>vote from the voter's board</b> (deduced from the people they trust, then confirmed)", "<b>vote issu du board du votant</b> (déduit des personnes à qui il fait confiance, puis confirmé)") : t("<b>direct vote</b> (the voter chose themselves)", "<b>vote direct</b> (le votant a choisi lui-même)")}.</p>`);
         break;
       case "coaliLedger.TrustRecorded":
@@ -431,6 +431,54 @@ async function decisionPage(id) {
     ${votes.map((e) => `<tr><td>${addr(e.data.voter, 8)}</td><td>${JSON.stringify(e.data.kind).includes("Inferred") ? `<span class="tag acc">${t("From board", "Via board")}</span>` : `<span class="tag">${t("Direct", "Direct")}</span>`}</td><td title="${esc(e.data.commitment)}">🔒 <span class="muted">${t("sealed", "scellé")}</span></td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td><a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a></td></tr>`).join("")}</tbody></table>` : `<div class="empty">${t("No vote yet.", "Aucun vote pour l'instant.")}</div>`}</div>`;
 }
 
+// Recomputes blake2_256("coali/commit/v1|decision|option|secret") in the browser and compares it
+// with the commitment stored on chain for the voter's one-time address.
+async function verifyPage(p) {
+  const field = (k, label, ph) => `<label class="vf"><span>${label}</span><input id="vf-${k}" class="mono" value="${esc(p[k] ?? "")}" placeholder="${esc(ph)}" spellcheck="false" autocomplete="off"></label>`;
+  app().innerHTML = `${title(t("Verify a vote", "Vérifier un vote"))}
+  <div class="note">${t("Your app gave you the secret of your vote (Popolitica: « My blockchain proofs »). This page recomputes the vote fingerprint from the decision, your choice and your secret, directly in your browser, and compares it with the one written on the chain. If they match, the chain holds exactly the choice you made. Nothing is sent anywhere.", "Votre app vous donne le secret de votre vote (Popolitica : « Mes preuves Blockchain »). Cette page recalcule l'empreinte du vote à partir de la décision, de votre choix et de votre secret, directement dans votre navigateur, et la compare à celle écrite sur la chaîne. Si elles sont identiques, la chaîne contient exactement le choix que vous avez fait. Rien n'est envoyé nulle part.")}</div>
+  <form class="card kv vform" onsubmit="return runVerify(event)">
+    ${field("d", t("Decision (id)", "Décision (id)"), "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")}
+    ${field("o", t("Your choice (option id)", "Votre choix (id de l'option)"), "yes")}
+    ${field("s", t("Your secret", "Votre secret"), "64 hex")}
+    ${field("v", t("One-time voter address", "Adresse de vote unique"), "5…")}
+    <button class="btn" type="submit">${t("Verify", "Vérifier")}</button>
+  </form>
+  <div id="vf-out"></div>`;
+  if (p.d && p.o && p.s && p.v) runVerify();
+}
+
+async function runVerify(evt) {
+  evt?.preventDefault();
+  const val = (k) => document.getElementById(`vf-${k}`).value.trim();
+  const d = val("d").toLowerCase(), o = val("o"), s = val("s").toLowerCase(), v = val("v");
+  const out = document.getElementById("vf-out");
+  out.innerHTML = `<div class="empty">${t("Checking…", "Vérification…")}</div>`;
+  try {
+    const { blake2b } = await import("https://esm.sh/@noble/hashes@1.4.0/blake2b");
+    const hash = blake2b(new TextEncoder().encode(`coali/commit/v1|${d}|${o}|${s}`), { dkLen: 32 });
+    const mine = "0x" + Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("");
+    const id = "0x" + d.replace(/-/g, "");
+    const rec = await get(`/vote/${encodeURIComponent(id)}?voter=${encodeURIComponent(v)}`);
+    const ok = rec && rec.commitment.toLowerCase() === mine;
+    out.innerHTML = `<div class="card kv" style="margin-top:18px">
+      ${kvRow(t("Result", "Résultat"), ok
+        ? `<span class="tag ok">✓ ${t("Match: the chain holds exactly this choice", "Identique : la chaîne contient exactement ce choix")}</span>`
+        : rec
+          ? `<span class="tag bad">✕ ${t("No match: the decision, choice or secret is different", "Différent : la décision, le choix ou le secret ne correspond pas")}</span>`
+          : `<span class="tag bad">✕ ${t("No vote found on chain for this address and decision", "Aucun vote trouvé sur la chaîne pour cette adresse et cette décision")}</span>`)}
+      ${kvRow(t("Recomputed fingerprint", "Empreinte recalculée"), `<span class="mono">${esc(mine)}</span>`)}
+      ${rec ? kvRow(t("Fingerprint on chain", "Empreinte sur la chaîne"), `<span class="mono">${esc(rec.commitment)}</span>`) : ""}
+      ${rec ? kvRow(t("Vote", "Vote"), `${rec.kind === "Inferred" ? t("From board", "Via board") : t("Direct", "Direct")} · ${t("block", "bloc")} ${blk(rec.recordedAt)}${rec.tx ? ` · <a href="/tx/${esc(rec.tx)}">${t("transaction", "transaction")}</a>` : ""} · ${decLink(id, 8)}`) : ""}
+    </div>`;
+  } catch (e) {
+    console.error(e);
+    out.innerHTML = `<div class="card empty">${t("Verification failed. Check the fields and retry.", "La vérification a échoué. Vérifiez les champs et réessayez.")}</div>`;
+  }
+  return false;
+}
+window.runVerify = runVerify;
+
 async function votesPage(p) {
   const tab = p.tab || "votes";
   const kinds = { votes: "coaliLedger.VoteRecorded", trusts: "coaliLedger.TrustRecorded", decisions: "coaliLedger.DecisionRegistered", results: "coaliLedger.SnapshotPublished", identity: "proofOfTrust.IdentityAttested" };
@@ -517,6 +565,7 @@ async function route() {
     else if (page === "decision") await decisionPage(decodeURIComponent(id));
     else if (page === "votes") await votesPage(p);
     else if (page === "validators") await validatorsPage();
+    else if (page === "verify") await verifyPage(p);
     else notFound();
   } catch (e) {
     app().innerHTML = `<div class="card empty">${t("The explorer is temporarily unavailable. Please retry in a moment.", "L'explorateur est momentanément indisponible. Réessayez dans un instant.")}</div>`;

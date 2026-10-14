@@ -1,6 +1,6 @@
 // Coali relayer: Supabase chain_outbox -> coali-ledger pallet.
 //
-// Each tick: chain_outbox_enqueue(network) and chain_outbox_enqueue_trust(network),
+// Each tick: board_recompute_dirty, chain_outbox_enqueue(network) and chain_outbox_enqueue_trust(network),
 // then send pending rows in id order (decisions, votes, snapshots, public trusts)
 // and write status, address, tx and block back.
 // Every write is checked against chain state first, so a crash or a retry never
@@ -204,6 +204,11 @@ async function prepare(row, trustNonces) {
 }
 
 async function tick() {
+  // Turns new votes (and inferred votes past their change window) into official votes,
+  // which chain_outbox_enqueue picks up. Touches board_* tables only.
+  await rest("rpc/board_recompute_dirty", { method: "POST", body: { p_limit: 500 } }).catch((e) =>
+    console.error(`[${NETWORK}] board recompute failed:`, e.message),
+  );
   const enq = await rest("rpc/chain_outbox_enqueue", { method: "POST", body: { p_network: NETWORK } });
   if (!enq?.enabled) {
     console.log(`[${NETWORK}] publication disabled (platform_settings.chain_ledger.enabled_networks)`);

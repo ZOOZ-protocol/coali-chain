@@ -291,6 +291,26 @@ const routes = {
       .map((b) => ({ ...b, ...earnings(b) }));
   },
 
+  // One vote, read from chain state: lets anyone check a (decision, option, secret) commitment.
+  async vote(p) {
+    const id = String(p.id ?? "").toLowerCase();
+    const voter = normAddr(p.voter);
+    if (!/^0x[0-9a-f]{32}$/.test(id) || !voter) return null;
+    const v = await api.query.coaliLedger.votes(id, voter);
+    if (v.isNone) return null;
+    const r = v.unwrap();
+    const e = q(`SELECT * FROM evs WHERE section='coaliLedger' AND method='VoteRecorded'
+      AND json_extract(data, '$.decisionId')=? AND json_extract(data, '$.voter')=? ORDER BY n DESC LIMIT 1`).get(id, voter);
+    return {
+      decisionId: id,
+      voter,
+      commitment: r.commitment.toHex(),
+      kind: r.kind.toString(),
+      recordedAt: r.recordedAt.toNumber(),
+      tx: e ? `${e.n}-${e.x}` : null,
+    };
+  },
+
   async decision(p) {
     const id = String(p.id ?? "").toLowerCase();
     if (!/^0x[0-9a-f]{32}$/.test(id)) return null;

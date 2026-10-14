@@ -111,3 +111,9 @@ footer{background:#fff;border-top:1px solid var(--line);margin-top:30px;padding:
 footer .wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
 footer .grow{text-align:right}
 a.mono{white-space:nowrap}
+.vform{padding:14px 18px;display:grid;gap:12px}
+.vf{display:grid;grid-template-columns:240px 1fr;gap:12px;align-items:center}
+.vf span{color:var(--muted)}
+.vf input{border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:13px;min-width:0;outline:none}
+.btn{justify-self:start;background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}
+@media(max-width:700px){.vf{grid-template-columns:1fr;gap:4px}}
