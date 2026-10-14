@@ -18,7 +18,7 @@ const EXPLORER = process.env.EXPLORER_URL ?? "https://explorer.testnet.coali.app
 await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(WS), noInitWarn: true });
 const faucet = new Keyring({ type: "sr25519" }).addFromUri(process.env.FAUCET_URI);
-const decimals = api.registry.chainDecimals[0] ?? 12;
+const decimals = api.registry.chainDecimals[0] ?? 9;
 const symbol = api.registry.chainTokens[0] ?? "ZOOZ";
 const amount = BigInt(DRIP) * 10n ** BigInt(decimals);
 const lastByAddress = new Map();
