@@ -79,4 +79,14 @@ Procédure pour l'opérateur :
    node relayer/register-validator.mjs <user_id> <adresse validateur>
    ```
 
-Le validateur entre dans le set à la session suivante. Une session dure 100 blocs, soit environ 10 minutes. Il est retiré s'il passe sous le seuil de trust, s'il perd sa vérification ou s'il ne produit aucun bloc pendant 300 blocs. Après une mise hors ligne, il revient avec `proofOfTrust.goOnline()`.
+Le validateur entre dans le set à la session suivante. Une session dure 50 blocs, soit environ 5 minutes. Il est retiré s'il passe sous le seuil de trust, s'il perd sa vérification ou s'il ne produit aucun bloc pendant 120 blocs. Après une mise hors ligne, il revient avec `proofOfTrust.goOnline()`.
+
+## 6. Économie (pallet `zoozEconomy`)
+
+- Offre fixe de 759 643 640 ZOOZ (9 décimales) : le plafond de 770M moins les 10 356 360 ZOOZ brûlés sur BSC. Elle ne grandit jamais.
+- Répartition du white paper : Fuel 65 %, Développement 10 %, Investisseurs 3 %, Équipe 12 %, Charité 10 %. Les tokens de test (sudo, attesters, faucet, fondateurs) sont pris sur Développement.
+- Frais indexés sur le dollar : un vote coûte environ `targetFeeMicroUsd` (0,05 $) au prix `priceMicroUsd`. Le prix est mis à jour par sudo ou par le compte `oracle`.
+- Les frais sont répartis entre l'auteur du bloc (60 %), la fondation (20 %) et l'app qui a généré la transaction (20 %). Sans app connue, la part de l'app retourne au Fuel.
+- Récompense de bloc prise sur le Fuel : 2,5 ZOOZ, divisée par deux tous les 21 000 000 blocs (environ 4 ans).
+- Tous ces paramètres se changent via sudo (`zoozEconomy.setPrice`, `setTargetFee`, `setFeeSplit`, `setBlockReward`, `setFoundation`, `setOracle`, `spend`).
+- Le buyback-and-burn sur BSC est une politique de la fondation, gérée hors chaîne et réglable.

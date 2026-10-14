@@ -203,7 +203,7 @@ const routes = {
       api.query.proofOfTrust.minTrust(),
     ]);
     const last = q("SELECT n, ts FROM blocks ORDER BY n DESC LIMIT 1").get();
-    const old = last ? q("SELECT n, ts FROM blocks WHERE n=?").get(Math.max(0, last.n - 100)) : null;
+    const old = last ? q("SELECT n, ts FROM blocks WHERE n=?").get(Math.max(1, last.n - 100)) : null;
     const count = (s, m) => q("SELECT COUNT(*) c FROM evs WHERE section=? AND method=?").get(s, m).c;
     return {
       chain: chainName,
