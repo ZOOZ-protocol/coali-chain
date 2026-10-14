@@ -67,6 +67,8 @@ services:
     environment:
       CHAIN_WS: ws://rpc:9944
       DB_PATH: /data/scan.db
+      # Name tags shown in the explorer (address=Name, comma-separated).
+      LABELS: 5Ece69BkcArVJVVRhrezvMYFf6rtyT5ohsyRChqizQhEFcxM=Popolitica,5Gxe4rSwUpDXHkZQxw48uweZGpXvJLL4EWqHAsUkQJvg16at=Faucet
     volumes:
       - scan-data:/data
     depends_on: [rpc]

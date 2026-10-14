@@ -1,10 +1,11 @@
 // Coalichain explorer backend: indexes finalized blocks into SQLite and serves a JSON API.
 // Env: CHAIN_WS (default ws://127.0.0.1:9944), DB_PATH (default /data/scan.db), PORT (default 8090),
-// BATCH (blocks fetched in parallel, default 20).
+// BATCH (blocks fetched in parallel, default 20), LABELS (name tags: "addr=Name,addr=Name").
 import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
+import { stringToU8a, u8aConcat } from "@polkadot/util";
 
 const WS = process.env.CHAIN_WS ?? "ws://127.0.0.1:9944";
 const DB_PATH = process.env.DB_PATH ?? "/data/scan.db";
@@ -55,6 +56,36 @@ const token = {
   symbol: props.tokenSymbol.unwrapOr([])[0]?.toString() ?? "ZOOZ",
   decimals: props.tokenDecimals.unwrapOr([])[0]?.toNumber() ?? 9,
 };
+
+// Treasury buckets of the zoozEconomy pallet (PalletId "modl" + 8-byte id, zero padded).
+const BUCKETS = { Fuel: "fuel/zoz", Development: "devt/zoz", Investors: "invs/zoz", Team: "team/zoz", Charity: "char/zoz" };
+const bucketAddr = (id) => encodeAddress(u8aConcat(stringToU8a("modl"), stringToU8a(id), new Uint8Array(20)), SS58);
+const ENV_LABELS = Object.fromEntries(
+  (process.env.LABELS ?? "").split(",").map((kv) => kv.split("=").map((x) => x.trim())).filter(([a, n]) => a && n),
+);
+
+let labelCache = { at: 0, v: {} };
+async function labels() {
+  if (Date.now() - labelCache.at < 60_000) return labelCache.v;
+  const [foundation, oracle, attesters, founders] = await Promise.all([
+    api.query.zoozEconomy.foundation(),
+    api.query.zoozEconomy.oracle(),
+    api.query.coaliLedger.attesters.keys(),
+    api.query.proofOfTrust.founders(),
+  ]);
+  const v = {};
+  for (const [name, id] of Object.entries(BUCKETS)) v[bucketAddr(id)] = { name: `${name} reserve`, kind: "treasury" };
+  for (const k of attesters) v[encodeAddress(k.args[0], SS58)] = { name: "Approved app", kind: "app" };
+  founders.forEach((f, i) => (v[encodeAddress(f, SS58)] = { name: `Founder validator ${i + 1}`, kind: "validator" }));
+  if (oracle.isSome) v[encodeAddress(oracle.unwrap(), SS58)] = { name: "Price oracle", kind: "system" };
+  if (foundation.isSome) v[encodeAddress(foundation.unwrap(), SS58)] = { name: "ZOOZ Foundation", kind: "foundation" };
+  for (const [a, name] of Object.entries(ENV_LABELS)) {
+    const k = normAddr(a);
+    if (k) v[k] = { ...(v[k] ?? { kind: "app" }), name };
+  }
+  labelCache = { at: Date.now(), v };
+  return v;
+}
 
 const isAccount = (codec) => /^AccountId(32)?$/.test(codec?.toRawType?.() ?? "");
 
@@ -191,17 +222,37 @@ function withEvents(xt, all = false) {
   return { ...parseRow(xt), events: all ? evs : evs.filter((e) => !NOISE.has(`${e.section}.${e.method}`)) };
 }
 
+// What the block author earned: the Fuel reward (transfer at block initialization) and its fee share.
+const rewardEvs = q("SELECT x, method, data FROM evs WHERE n=? AND section='balances' AND method IN ('Transfer','Deposit')");
+function earnings(b) {
+  let reward = 0n, fees = 0n;
+  for (const e of rewardEvs.all(b.n)) {
+    const d = JSON.parse(e.data);
+    if (e.method === "Transfer" && e.x === -1 && d.to === b.author) reward += BigInt(d.amount);
+    if (e.method === "Deposit" && d.who === b.author) fees += BigInt(d.amount);
+  }
+  return { reward: reward.toString(), fees: fees.toString() };
+}
+
 const lim = (v, d = 25) => Math.min(100, Math.max(1, Number(v) || d));
 const before = (v) => (v === undefined || v === null || v === "" ? Number.MAX_SAFE_INTEGER : Number(v));
 
 const routes = {
   async stats() {
-    const [best, validators, issuance, minTrust] = await Promise.all([
+    const [best, validators, issuance, minTrust, price, targetFee, split, reward, halving, fuel, names] = await Promise.all([
       api.rpc.chain.getHeader(),
       api.query.session.validators(),
       api.query.balances.totalIssuance(),
       api.query.proofOfTrust.minTrust(),
+      api.query.zoozEconomy.priceMicroUsd(),
+      api.query.zoozEconomy.targetFeeMicroUsd(),
+      api.query.zoozEconomy.feeSplit(),
+      api.query.zoozEconomy.blockReward(),
+      api.query.zoozEconomy.halvingInterval(),
+      api.query.system.account(bucketAddr(BUCKETS.Fuel)),
+      labels(),
     ]);
+    const priceAt = q("SELECT n, ts FROM evs WHERE section='zoozEconomy' AND method='PriceSet' ORDER BY n DESC LIMIT 1").get();
     const last = q("SELECT n, ts FROM blocks ORDER BY n DESC LIMIT 1").get();
     const old = last ? q("SELECT n, ts FROM blocks WHERE n=?").get(Math.max(1, last.n - 100)) : null;
     const count = (s, m) => q("SELECT COUNT(*) c FROM evs WHERE section=? AND method=?").get(s, m).c;
@@ -213,7 +264,7 @@ const routes = {
       indexed: last?.n ?? -1,
       blockTime: last && old && last.n > old.n ? (last.ts - old.ts) / (last.n - old.n) / 1000 : null,
       transactions: q("SELECT COUNT(*) c FROM xts WHERE signer IS NOT NULL").get().c,
-      transfers: count("balances", "Transfer"),
+      transfers: q("SELECT COUNT(*) c FROM evs WHERE section='balances' AND method='Transfer' AND x >= 0").get().c,
       votes: count("coaliLedger", "VoteRecorded"),
       trusts: count("coaliLedger", "TrustRecorded"),
       decisions: count("coaliLedger", "DecisionRegistered"),
@@ -222,11 +273,42 @@ const routes = {
       validators: validators.map((v) => encodeAddress(v, SS58)),
       minTrust: minTrust.toNumber(),
       issuance: issuance.toString(),
+      economy: {
+        priceUsd: price.toNumber() / 1e6,
+        priceUpdated: priceAt?.ts ?? null,
+        targetFeeUsd: targetFee.toNumber() / 1e6,
+        split: { author: split[0].toNumber(), foundation: split[1].toNumber(), app: 100 - split[0].toNumber() - split[1].toNumber() },
+        blockReward: reward.toString(),
+        halvingInterval: halving.toNumber(),
+        fuel: fuel.data.free.toString(),
+      },
+      labels: names,
     };
   },
 
   blocks(p) {
-    return q("SELECT * FROM blocks WHERE n < ? ORDER BY n DESC LIMIT ?").all(before(p.before), lim(p.limit));
+    return q("SELECT * FROM blocks WHERE n < ? ORDER BY n DESC LIMIT ?").all(before(p.before), lim(p.limit))
+      .map((b) => ({ ...b, ...earnings(b) }));
+  },
+
+  async decision(p) {
+    const id = String(p.id ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{32}$/.test(id)) return null;
+    const [info, count] = await Promise.all([api.query.coaliLedger.decisions(id), api.query.coaliLedger.voteCount(id)]);
+    if (info.isNone) return null;
+    const d = info.unwrap();
+    const evs = q(`SELECT * FROM evs WHERE section='coaliLedger' AND method IN ('DecisionRegistered','VoteRecorded','SnapshotPublished')
+      AND json_extract(data, '$.decisionId')=? ORDER BY n DESC, i DESC LIMIT 500`).all(id).map(parseRow);
+    return {
+      id,
+      contentHash: d.contentHash.toHex(),
+      category: d.category.toNumber(),
+      registeredBy: encodeAddress(d.registeredBy, SS58),
+      registeredAt: d.registeredAt.toNumber(),
+      closed: d.closed.isTrue,
+      votes: count.toNumber(),
+      events: evs,
+    };
   },
 
   block(p) {
@@ -236,6 +318,7 @@ const routes = {
     if (!b) return null;
     return {
       ...b,
+      ...earnings(b),
       extrinsics: q("SELECT * FROM xts WHERE n=? ORDER BY i").all(b.n).map(parseRow),
       events: q("SELECT * FROM evs WHERE n=? ORDER BY i").all(b.n).map(parseRow),
     };

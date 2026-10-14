@@ -4,11 +4,14 @@
 // sudo) for a forced GRANDPA change at the next session, where proof of trust has already
 // left offline validators out.
 //
+// Also runs the daily ZOOZ price oracle (price.mjs).
+//
 // Env: CHAIN_WS, SUDO_URI, LAG_BLOCKS (default 30), FORCED_DELAY (default 5), INTERVAL_S (default 30).
 
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
+import { startPriceOracle } from "./price.mjs";
 
 const LAG = Number(process.env.LAG_BLOCKS ?? 30);
 const DELAY = Number(process.env.FORCED_DELAY ?? 5);
@@ -55,6 +58,7 @@ async function tick() {
 }
 
 log(`watchdog on ${process.env.CHAIN_WS}, lag threshold ${LAG} blocks`);
+startPriceOracle(api, sudo, log);
 for (;;) {
   try {
     await tick();

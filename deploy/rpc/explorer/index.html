@@ -3,29 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Coalichain Explorer</title>
-<meta name="description" content="Coalichain testnet explorer: blocks, transactions, accounts, votes and trusts.">
-<link rel="stylesheet" href="/app.css">
+<title>Coaliscan — Coalichain Explorer</title>
+<meta name="description" content="Coalichain testnet explorer: blocks, transactions, addresses, votes and trusts.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%2321325b'/%3E%3Ctext x='16' y='22' font-size='17' font-family='Arial' font-weight='700' fill='%23fff' text-anchor='middle'%3EZ%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css?v=2">
 </head>
 <body>
-<div class="top">
-  <div class="bar">
-    <a class="logo" href="/">Coali<span>scan</span> <small>testnet</small></a>
-    <nav>
-      <a href="/blocks" data-nav="blocks"></a>
-      <a href="/txs" data-nav="txs"></a>
-      <a href="/votes" data-nav="votes"></a>
-      <a href="/validators" data-nav="validators"></a>
-    </nav>
-    <div class="lang"><button id="b-en" onclick="setLang('en')">EN</button><button id="b-fr" onclick="setLang('fr')">FR</button></div>
-  </div>
-  <form class="search" onsubmit="return doSearch(event)">
-    <input id="q" autocomplete="off" spellcheck="false">
-    <button id="qb"></button>
-  </form>
-</div>
+<div class="topbar"><div class="in">
+  <span id="tprice"></span>
+  <span class="grow"></span>
+  <span class="lang"><button id="b-en" onclick="setLang('en')">EN</button><button id="b-fr" onclick="setLang('fr')">FR</button></span>
+</div></div>
+<header><div class="in">
+  <a class="logo" href="/"><span class="dot">Z</span><span>Coali<b>scan</b></span><small>testnet</small></a>
+  <form class="hsearch" id="hsearch" onsubmit="return doSearch(event, 'hq')"><input id="hq" autocomplete="off" spellcheck="false"><button aria-label="search">⌕</button></form>
+  <nav>
+    <a href="/" data-nav="home"></a>
+    <a href="/blocks" data-nav="blocks"></a>
+    <a href="/txs" data-nav="txs"></a>
+    <a href="/votes" data-nav="votes"></a>
+    <a href="/validators" data-nav="validators"></a>
+  </nav>
+</div></header>
+<div id="hero"></div>
 <main id="app" class="wrap"></main>
-<footer class="wrap" id="foot"></footer>
-<script src="/app.js"></script>
+<footer><div class="wrap" id="foot"></div></footer>
+<script src="/app.js?v=2"></script>
 </body>
 </html>
