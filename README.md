@@ -10,7 +10,9 @@ Coalichain is the blockchain of the [ZOOZ Protocol](https://github.com/ZOOZ-prot
 - Faucet (test ZOOZ): <https://faucet.testnet.coali.app>
 - Run a validator: <https://testnet.coali.app/run-a-validator>
 
-Token: **ZOOZ** (Coalichain Token), 12 decimals. Testnet tokens have no value.
+- SDK (TypeScript): [`sdk/`](sdk/README.md)
+
+Token: **ZOOZ** (Coalichain Token), 9 decimals. Testnet tokens have no value.
 
 ## How it works
 
@@ -36,6 +38,7 @@ pallets/proof-of-trust/  Validator selection by trust
 relayer/                 App database -> chain publisher
 faucet/                  Testnet faucet
 scan/                    Explorer indexer + API (SQLite); site in deploy/rpc/explorer
+sdk/                     TypeScript SDK (@zooz-protocol/sdk)
 watchdog/                Testnet finality watchdog
 deploy/                  Docker images, chain spec generation, server setup
 scripts/                 Local network and end-to-end tests
@@ -59,7 +62,7 @@ Public testnet, 3 founder validators (Falkenstein, Nuremberg, Helsinki). Not aud
 
 ## License
 
-[Business Source License 1.1](LICENSE) — © 2026 ZOOZ Protocol.
+[Business Source License 1.1](LICENSE) — © 2026 ZOOZ Protocol. The SDK in `sdk/` is licensed separately under [Apache-2.0](sdk/LICENSE).
 
 - You may read, audit, modify and test this code, run nodes and validators on the official Coalichain networks, and build apps, wallets and tools for them.
 - You may not use it to launch or operate another blockchain network.

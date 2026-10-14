@@ -1,0 +1,63 @@
+{
+  "name": "@zooz-protocol/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Coalichain (ZOOZ Protocol): read votes, trusts and decisions, and verify vote proofs.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./chain": {
+      "types": "./dist/chain.d.ts",
+      "import": "./dist/chain.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/unit.test.mjs",
+    "test:live": "npm run build && node --test test/live.test.mjs",
+    "release": "npm test && npm pack && npx -y esbuild@0.24.0 src/index.ts --bundle --format=esm --minify --target=es2020 --outfile=zooz-sdk-$npm_package_version.js"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.4.0"
+  },
+  "peerDependencies": {
+    "@polkadot/api": ">=14"
+  },
+  "peerDependenciesMeta": {
+    "@polkadot/api": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@polkadot/api": "^17.0.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZOOZ-protocol/coali-chain.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://zooz.network/developers",
+  "keywords": [
+    "zooz",
+    "coalichain",
+    "proof-of-trust",
+    "substrate",
+    "polkadot",
+    "voting"
+  ]
+}
