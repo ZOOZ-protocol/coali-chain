@@ -7,7 +7,9 @@
 //! - decisions (an id and the hash of the question and options),
 //! - one vote commitment per voter address and decision, signed by the voter,
 //! - trust given or revoked between trust addresses, signed by the truster,
-//! - successive Merkle snapshots of each decision tally; the final one closes it.
+//! - successive Merkle snapshots of each decision tally; the final one closes it,
+//! - optionally, the clear text of a decision and the clear totals of a snapshot, accepted
+//!   only if they hash to the content hash and totals hash already recorded.
 //!
 //! Only accounts registered as attesters can submit extrinsics. An attester vouches
 //! that the voter is eligible; the voter signature proves the voter key holder agreed.
@@ -31,6 +33,15 @@ pub use weights::WeightInfo;
 pub type DecisionId = [u8; 16];
 /// 32-byte hash (blake2-256 unless stated otherwise).
 pub type Hash32 = [u8; 32];
+
+/// Max size of a decision's canonical JSON content (question and options).
+pub type MaxContentLen = frame_support::traits::ConstU32<8192>;
+/// Max size of a snapshot's canonical JSON totals ({ option id: votes }).
+pub type MaxTotalsLen = frame_support::traits::ConstU32<2048>;
+
+fn blake2_256(data: &[u8]) -> Hash32 {
+	<sp_runtime::traits::BlakeTwo256 as sp_runtime::traits::Hash>::hash(data).0
+}
 
 pub const VOTE_CONTEXT: &[u8] = b"coali/vote/v1";
 pub const TRUST_CONTEXT: &[u8] = b"coali/trust/v1";
@@ -209,6 +220,23 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type LatestSnapshot<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, u32, OptionQuery>;
 
+	/// Clear content of a decision, matching its `content_hash`.
+	#[pallet::storage]
+	pub type DecisionContent<T: Config> =
+		StorageMap<_, Blake2_128Concat, DecisionId, BoundedVec<u8, MaxContentLen>, OptionQuery>;
+
+	/// Clear totals of a snapshot, matching its `totals_hash`.
+	#[pallet::storage]
+	pub type SnapshotTotals<T: Config> = StorageDoubleMap<
+		_,
+		Blake2_128Concat,
+		DecisionId,
+		Twox64Concat,
+		u32,
+		BoundedVec<u8, MaxTotalsLen>,
+		OptionQuery,
+	>;
+
 	#[pallet::genesis_config]
 	#[derive(frame_support::DefaultNoBound)]
 	pub struct GenesisConfig<T: Config> {
@@ -245,6 +273,8 @@ pub mod pallet {
 			totals_hash: Hash32,
 			is_final: bool,
 		},
+		ContentPublished { decision_id: DecisionId },
+		TotalsPublished { decision_id: DecisionId, seq: u32 },
 	}
 
 	#[pallet::error]
@@ -264,6 +294,10 @@ pub mod pallet {
 		TrustNotFound,
 		SnapshotOutOfOrder,
 		Overflow,
+		UnknownSnapshot,
+		ContentMismatch,
+		TotalsMismatch,
+		AlreadyPublished,
 	}
 
 	#[pallet::call]
@@ -430,6 +464,43 @@ pub mod pallet {
 				totals_hash,
 				is_final,
 			});
+			Ok(())
+		}
+
+		/// Publishes the clear content of a registered decision. Rejected unless its
+		/// blake2-256 equals the decision's `content_hash`.
+		#[pallet::call_index(6)]
+		#[pallet::weight(T::WeightInfo::publish_content(content.len() as u32))]
+		pub fn publish_content(
+			origin: OriginFor<T>,
+			decision_id: DecisionId,
+			content: BoundedVec<u8, MaxContentLen>,
+		) -> DispatchResult {
+			Self::ensure_attester(origin)?;
+			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(!DecisionContent::<T>::contains_key(decision_id), Error::<T>::AlreadyPublished);
+			ensure!(blake2_256(&content) == decision.content_hash, Error::<T>::ContentMismatch);
+			DecisionContent::<T>::insert(decision_id, content);
+			Self::deposit_event(Event::ContentPublished { decision_id });
+			Ok(())
+		}
+
+		/// Publishes the clear totals of a snapshot. Rejected unless their blake2-256
+		/// equals the snapshot's `totals_hash`.
+		#[pallet::call_index(7)]
+		#[pallet::weight(T::WeightInfo::publish_totals(totals.len() as u32))]
+		pub fn publish_totals(
+			origin: OriginFor<T>,
+			decision_id: DecisionId,
+			seq: u32,
+			totals: BoundedVec<u8, MaxTotalsLen>,
+		) -> DispatchResult {
+			Self::ensure_attester(origin)?;
+			let snapshot = Snapshots::<T>::get(decision_id, seq).ok_or(Error::<T>::UnknownSnapshot)?;
+			ensure!(!SnapshotTotals::<T>::contains_key(decision_id, seq), Error::<T>::AlreadyPublished);
+			ensure!(blake2_256(&totals) == snapshot.totals_hash, Error::<T>::TotalsMismatch);
+			SnapshotTotals::<T>::insert(decision_id, seq, totals);
+			Self::deposit_event(Event::TotalsPublished { decision_id, seq });
 			Ok(())
 		}
 	}

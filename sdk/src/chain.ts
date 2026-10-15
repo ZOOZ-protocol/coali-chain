@@ -23,11 +23,25 @@ export interface ChainDecision {
   registeredAt: number;
   closed: boolean;
   votes: number;
+  /** Clear content ({ question, options }) if published; the chain checked it against `contentHash`. */
+  content: unknown | null;
 }
+
+const parseJson = (bytes: Uint8Array): unknown => {
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+};
 
 export async function getDecision(api: ApiPromise, id: string): Promise<ChainDecision | null> {
   const key = decisionId(id);
-  const [info, count] = await Promise.all([q(api).decisions(key), q(api).voteCount(key)]);
+  const [info, count, content] = await Promise.all([
+    q(api).decisions(key),
+    q(api).voteCount(key),
+    q(api).decisionContent?.(key),
+  ]);
   if (info.isNone) return null;
   const d = info.unwrap();
   return {
@@ -38,6 +52,7 @@ export async function getDecision(api: ApiPromise, id: string): Promise<ChainDec
     registeredAt: d.registeredAt.toNumber(),
     closed: d.closed.isTrue,
     votes: count.toNumber(),
+    content: content?.isSome ? parseJson(content.unwrap().toU8a(true)) : null,
   };
 }
 
@@ -89,6 +104,8 @@ export interface Snapshot {
   totalsHash: Hex;
   isFinal: boolean;
   publishedAt: number;
+  /** Votes per option id if published in clear; the chain checked them against `totalsHash`. */
+  totals: Record<string, number> | null;
 }
 
 /** A result snapshot of a decision; the latest one if `seq` is omitted. */
@@ -99,7 +116,7 @@ export async function getSnapshot(api: ApiPromise, decision: string, seq?: numbe
     if (latest.isNone) return null;
     seq = latest.unwrap().toNumber() as number;
   }
-  const s = await q(api).snapshots(key, seq);
+  const [s, totals] = await Promise.all([q(api).snapshots(key, seq), q(api).snapshotTotals?.(key, seq)]);
   if (s.isNone) return null;
   const v = s.unwrap();
   return {
@@ -108,6 +125,7 @@ export async function getSnapshot(api: ApiPromise, decision: string, seq?: numbe
     totalsHash: v.totalsHash.toHex(),
     isFinal: v.isFinal.isTrue,
     publishedAt: v.publishedAt.toNumber(),
+    totals: totals?.isSome ? (parseJson(totals.unwrap().toU8a(true)) as Record<string, number>) : null,
   };
 }
 

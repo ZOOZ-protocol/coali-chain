@@ -92,6 +92,7 @@ function methodName(x) {
     "balances.transferKeepAlive": "Transfer", "balances.transferAllowDeath": "Transfer", "balances.transferAll": "Transfer",
     "coaliLedger.recordVote": t("Vote", "Vote"), "coaliLedger.recordTrust": "Trust", "coaliLedger.registerDecision": t("New Decision", "Décision"),
     "coaliLedger.publishSnapshot": t("Publish Results", "Résultats"), "sudo.sudo": "Admin", "session.setKeys": "Set Keys",
+    "coaliLedger.publishContent": t("Decision Text", "Texte de décision"), "coaliLedger.publishTotals": t("Result Totals", "Totaux"),
     "zoozEconomy.chooseApp": t("Choose App", "Choix d'app"), "utility.batch": "Batch", "utility.batchAll": "Batch",
   }[k];
   if (m) return m;
@@ -128,6 +129,10 @@ function eventLabel(e, me) {
       return `📄 ${t("New decision put to a vote", "Nouvelle décision soumise au vote")} ${decLink(d.decisionId)}`;
     case "coaliLedger.SnapshotPublished":
       return `📊 ${d.isFinal ? t("Final results of", "Résultats définitifs de") : t("Interim results of", "Résultats intermédiaires de")} ${decLink(d.decisionId)}`;
+    case "coaliLedger.ContentPublished":
+      return `📄 ${t("Text of decision", "Texte de la décision")} ${decLink(d.decisionId)} ${t("published", "publié")}`;
+    case "coaliLedger.TotalsPublished":
+      return `🔢 ${t("Vote totals of", "Totaux des votes de")} ${decLink(d.decisionId)} ${t("published", "publiés")}`;
     case "coaliLedger.AttesterAdded":
       return `${t("App approved", "App approuvée")} ${addr(d.who)}`;
     case "coaliLedger.AttesterRemoved":
@@ -205,6 +210,14 @@ function explain(x) {
       case "coaliLedger.SnapshotPublished":
         out.push(`<p class="lead">📊 ${d.isFinal ? t("The final results of", "Les résultats définitifs de") : t("Interim results of", "Des résultats intermédiaires de")} ${decLink(d.decisionId, 8)} ${t("were anchored on the chain", "ont été ancrés sur la chaîne")} <span class="muted">(${t("snapshot", "instantané")} #${esc(d.seq)})</span>.</p>
           <p>${t("The Merkle root", "La racine de Merkle")} <span class="mono sm">${esc(short(d.merkleRoot, 10))}</span> ${t("is a single fingerprint of the full list of votes. Anyone with the list can recompute it and check that no vote was added, removed or changed.", "est une empreinte unique de la liste complète des votes. Toute personne qui a la liste peut la recalculer et vérifier qu'aucun vote n'a été ajouté, retiré ou modifié.")}</p>`);
+        break;
+      case "coaliLedger.ContentPublished":
+        out.push(`<p class="lead">📄 ${t("The text of decision", "Le texte de la décision")} ${decLink(d.decisionId, 8)} ${t("was published on the chain.", "a été publié sur la chaîne.")}</p>
+          <p>${t("The chain accepted it only because it matches, letter for letter, the fingerprint recorded when the vote opened.", "La chaîne ne l'a accepté que parce qu'il correspond, lettre pour lettre, à l'empreinte enregistrée à l'ouverture du vote.")}</p>`);
+        break;
+      case "coaliLedger.TotalsPublished":
+        out.push(`<p class="lead">🔢 ${t("The vote totals of", "Les totaux des votes de")} ${decLink(d.decisionId, 8)} ${t("were published on the chain", "ont été publiés sur la chaîne")} <span class="muted">(${t("snapshot", "instantané")} #${esc(d.seq)})</span>.</p>
+          <p>${t("The chain accepted them only because they match the fingerprint of the results anchored earlier: they cannot be changed afterwards.", "La chaîne ne les a acceptés que parce qu'ils correspondent à l'empreinte des résultats ancrée auparavant : ils ne peuvent plus être modifiés.")}</p>`);
         break;
       case "balances.Transfer":
         if (e.x === -1) break;
@@ -415,8 +428,27 @@ async function decisionPage(id) {
   const snaps = d.events.filter((e) => e.method === "SnapshotPublished");
   const reg = d.events.find((e) => e.method === "DecisionRegistered");
   const fin = snaps.find((e) => e.data.isFinal);
+  const opts = d.content?.options ?? [];
+  const latest = [...(d.results ?? [])].reverse().find((r) => r.totals);
+  let resultsCard = "";
+  if (latest) {
+    const ids = [...new Set([...opts.map((o) => o.id), ...Object.keys(latest.totals)])];
+    const total = Object.values(latest.totals).reduce((a, b) => a + Number(b), 0);
+    const rows = ids.map((id) => {
+      const n = Number(latest.totals[id] ?? 0);
+      const pct = total ? Math.round((n * 100) / total) : 0;
+      const label = opts.find((o) => o.id === id)?.text ?? id;
+      return `<div class="res"><div class="res-l"><span dir="auto">${esc(label)}</span><span><b>${num(n)}</b> <span class="muted">(${pct}%)</span></span></div><div class="res-bar"><i style="width:${pct}%"></i></div></div>`;
+    });
+    resultsCard = `<div class="card" style="margin-bottom:18px"><div class="card-h"><span>${t("Results published on the chain", "Résultats publiés sur la chaîne")}</span><span class="tag ok" title="${esc(t("The chain accepted these totals only because they match the fingerprint of the results anchored with the votes.", "La chaîne n'a accepté ces totaux que parce qu'ils correspondent à l'empreinte des résultats ancrée avec les votes."))}">✓ ${t("Verified by the chain", "Vérifié par la chaîne")}</span></div>
+    <div style="padding:16px">${rows.join("")}<div class="muted sm" style="margin-top:10px">${num(total)} ${t("votes", "votes")} · ${t("snapshot", "instantané")} #${latest.seq} · ${latest.isFinal ? t("final", "définitif") : t("interim", "intermédiaire")} · ${t("block", "bloc")} ${blk(latest.publishedAt)}</div></div></div>`;
+  }
+  const question = d.content?.question
+    ? `<div class="card" style="margin-bottom:18px"><div class="card-h"><span dir="auto">❓ ${esc(d.content.question)}</span><span class="tag ok" title="${esc(t("This text matches, letter for letter, the fingerprint recorded when the vote opened.", "Ce texte correspond, lettre pour lettre, à l'empreinte enregistrée à l'ouverture du vote."))}">✓ ${t("Original text", "Texte d'origine")}</span></div></div>`
+    : `<div class="note">${t("The text of the decision stays in the app (Popolitica, Coali…). The chain keeps its fingerprint, every anonymous vote and the results, so anyone can check that nothing was changed.", "Le texte de la décision reste dans l'app (Popolitica, Coali…). La chaîne garde son empreinte, chaque vote anonyme et les résultats, pour que chacun puisse vérifier que rien n'a été modifié.")}</div>`;
   app().innerHTML = `${title(t("Decision", "Décision"), `<span class="mono">${esc(d.id)}</span> ${copyBtn(d.id)} ${d.closed || fin ? `<span class="tag">${t("Closed", "Clôturée")}</span>` : `<span class="tag ok">${t("Open to votes", "Vote ouvert")}</span>`}`)}
-  <div class="note">${t("The text of the decision stays in the app (Popolitica, Coali…). The chain keeps its fingerprint, every anonymous vote and the results, so anyone can check that nothing was changed.", "Le texte de la décision reste dans l'app (Popolitica, Coali…). La chaîne garde son empreinte, chaque vote anonyme et les résultats, pour que chacun puisse vérifier que rien n'a été modifié.")}</div>
+  ${question}
+  ${resultsCard}
   <div class="card kv">
     ${kvRow(t("Votes recorded", "Votes enregistrés"), `<b>${num(d.votes)}</b>`)}
     ${kvRow(t("Results", "Résultats"), fin ? `<span class="tag ok">${t("Final results anchored", "Résultats définitifs ancrés")}</span> ${t("block", "bloc")} ${blk(fin.n)}` : snaps.length ? `${snaps.length} ${t("interim snapshot(s)", "instantané(s) intermédiaire(s)")}` : t("Not published yet", "Pas encore publiés"))}

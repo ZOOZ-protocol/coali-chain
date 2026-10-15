@@ -1,8 +1,9 @@
 // Coali relayer: Supabase chain_outbox -> coali-ledger pallet.
 //
 // Each tick: board_recompute_dirty, chain_outbox_enqueue(network) and chain_outbox_enqueue_trust(network),
-// then send pending rows in id order (decisions, votes, snapshots, public trusts)
-// and write status, address, tx and block back.
+// then send pending rows in id order (decisions, votes, snapshots, trusts)
+// and write status, address, tx and block back. Also publishes the clear text of
+// decisions and the clear totals of results once they are confirmed.
 // Every write is checked against chain state first, so a crash or a retry never
 // produces a duplicate: a row already on chain is just marked confirmed.
 //
@@ -35,14 +36,14 @@ const interval = Number([...args].find((a) => a.startsWith("--interval="))?.spli
 // ---------------------------------------------------------------------------
 // Supabase (PostgREST with the service key)
 // ---------------------------------------------------------------------------
-async function rest(path, { method = "GET", body } = {}) {
+async function rest(path, { method = "GET", body, prefer = "return=minimal" } = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     method,
     headers: {
       apikey: SERVICE_KEY,
       Authorization: `Bearer ${SERVICE_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "return=minimal",
+      Prefer: prefer,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -53,6 +54,18 @@ async function rest(path, { method = "GET", body } = {}) {
 
 const updateRow = (id, patch) =>
   rest(`chain_outbox?id=eq.${id}`, { method: "PATCH", body: { ...patch, updated_at: new Date().toISOString() } });
+
+// Public user -> trust (receiving) address, read by the app to link profiles to the chain.
+const publishedAddresses = new Set();
+async function publishTrustAddress(userId, address) {
+  if (publishedAddresses.has(userId)) return;
+  await rest("chain_trust_addresses?on_conflict=user_id,network", {
+    method: "POST",
+    body: { user_id: userId, network: NETWORK, address, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  publishedAddresses.add(userId);
+}
 
 // ---------------------------------------------------------------------------
 // Encoding shared with verifiers (docs/protocol/coali-trust-protocol.md, section 6)
@@ -104,7 +117,10 @@ const keyring = new Keyring({ type: "sr25519", ss58Format: api.registry.chainSS5
 const attester = keyring.addFromUri(env("ATTESTER_URI"));
 const MASTER = env("VOTER_MASTER_SEED");
 const voterKey = (userId, decisionId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//vote//${decisionId}`);
+// A user receives trust on one address (public, shown on their profile) and gives trust
+// from another, never linked to their name, so private trusts stay private.
 const trustKey = (userId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//trust`);
+const giveKey = (userId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//trust//give`);
 const ACTION_INDEX = { Give: 0, Revoke: 1 };
 
 function trustPayload(trusterPub, trustedPub, categoryId, action, nonce) {
@@ -148,8 +164,9 @@ async function blockNumber(hash) {
 async function prepare(row, trustNonces) {
   const p = row.payload;
   if (row.kind === "trust") {
-    const truster = trustKey(p.truster_id);
+    const truster = giveKey(p.truster_id);
     const trusted = trustKey(p.trusted_id);
+    await publishTrustAddress(p.trusted_id, trusted.address);
     const result = { truster_public: u8aToHex(truster.publicKey), trusted_public: u8aToHex(trusted.publicKey) };
     const extra = { chain_address: truster.address };
     const exists = (await api.query.coaliLedger.trustEdges(truster.address, trusted.address, p.category_id)).isSome;
@@ -203,6 +220,53 @@ async function prepare(row, trustNonces) {
   throw new Error(`unknown kind ${row.kind}`);
 }
 
+// Clear text of confirmed decisions and clear totals of confirmed snapshots. The chain accepts
+// them only if they hash to the recorded content hash / totals hash; past rows are backfilled.
+const MAX_CONTENT = 8192;
+const clearDone = new Set();
+async function publishClear() {
+  if (typeof api.tx.coaliLedger.publishContent !== "function") return 0;
+  const rows = await rest(
+    `chain_outbox?select=kind,decision_id,payload,result&network=eq.${NETWORK}&kind=in.(decision,snapshot)&status=eq.confirmed&order=id.asc`,
+  );
+  const jobs = [];
+  for (const r of rows) {
+    if (jobs.length >= 50) break;
+    const id = uuidBytes(r.decision_id);
+    if (r.kind === "decision") {
+      const key = `content:${r.decision_id}`;
+      if (clearDone.has(key)) continue;
+      const bytes = stringToU8a(canonicalJson(r.payload.content));
+      if (bytes.length > MAX_CONTENT || (await api.query.coaliLedger.decisionContent(id)).isSome) {
+        clearDone.add(key);
+        continue;
+      }
+      // Bytes arguments: a Uint8Array would be read as already SCALE-encoded, hex is raw.
+      jobs.push({ key, tx: api.tx.coaliLedger.publishContent(id, u8aToHex(bytes)) });
+    } else {
+      const key = `totals:${r.decision_id}:${r.payload.seq}`;
+      if (clearDone.has(key) || !r.result?.totals) continue;
+      if ((await api.query.coaliLedger.snapshotTotals(id, r.payload.seq)).isSome) {
+        clearDone.add(key);
+        continue;
+      }
+      const totals = u8aToHex(stringToU8a(canonicalJson(r.result.totals)));
+      jobs.push({ key, tx: api.tx.coaliLedger.publishTotals(id, r.payload.seq, totals) });
+    }
+  }
+  if (jobs.length === 0) return 0;
+  let nonce = (await api.rpc.system.accountNextIndex(attester.address)).toNumber();
+  const results = await Promise.all(jobs.map((j) => submit(j.tx, nonce++)));
+  let ok = 0;
+  results.forEach((r, i) => {
+    // Transient failures are retried next tick; a mismatch would fail forever.
+    if (r.ok || /Mismatch|AlreadyPublished/.test(r.error ?? "")) clearDone.add(jobs[i].key);
+    if (r.ok) ok++;
+    else console.error(`[${NETWORK}] ${jobs[i].key}: ${r.error}`);
+  });
+  return ok;
+}
+
 async function tick() {
   // Turns new votes (and inferred votes past their change window) into official votes,
   // which chain_outbox_enqueue picks up. Touches board_* tables only.
@@ -216,6 +280,11 @@ async function tick() {
   }
   const enqTrust = await rest("rpc/chain_outbox_enqueue_trust", { method: "POST", body: { p_network: NETWORK } });
   enq.trusts = enqTrust?.trusts ?? 0;
+  const cleared = await publishClear().catch((e) => {
+    console.error(`[${NETWORK}] clear publication failed:`, e.message);
+    return 0;
+  });
+  if (cleared) console.log(`[${NETWORK}] published ${cleared} decision texts / result totals`);
   const rows = await rest(
     `chain_outbox?select=*&network=eq.${NETWORK}&status=in.(pending,sent,failed)&attempts=lt.${MAX_ATTEMPTS}&order=id.asc&limit=${BATCH}`,
   );

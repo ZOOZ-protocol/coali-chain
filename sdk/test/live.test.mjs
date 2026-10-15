@@ -1,7 +1,7 @@
 // Live tests against the public testnet (network required).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { ExplorerClient, TESTNET } from "../dist/index.js";
+import { ExplorerClient, TESTNET, contentHash, totalsHash } from "../dist/index.js";
 import { connect, getDecision, getVote, getVotes, getSnapshot, verifySnapshot, trustReceived } from "../dist/chain.js";
 
 const client = new ExplorerClient();
@@ -26,6 +26,16 @@ test("explorer: latest vote, its decision, and a wrong secret", async () => {
   assert.equal(r.match, false);
   assert.ok(r.onChain);
   assert.equal(await client.vote(ev.data.decisionId, "5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM"), null);
+});
+
+test("explorer: clear text and totals match the anchored fingerprints", async () => {
+  const [s] = await client.snapshots({ limit: 1 });
+  const d = await client.decision(s.data.decisionId);
+  const published = d.results.filter((r) => r.totals);
+  assert.ok(published.length > 0, "no totals published");
+  for (const r of published) assert.equal(totalsHash(r.totals), r.totalsHash);
+  assert.ok(d.content, "no content published");
+  assert.equal(contentHash(d.content), d.contentHash);
 });
 
 test("chain: reads match the explorer", async () => {

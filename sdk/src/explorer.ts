@@ -77,6 +77,20 @@ export interface SnapshotPublishedData {
   isFinal: boolean;
 }
 
+export interface DecisionContent {
+  question: string;
+  options: { id: string; text: string }[];
+}
+
+export interface DecisionResult {
+  seq: number;
+  isFinal: boolean;
+  publishedAt: number;
+  totalsHash: Hex;
+  /** Votes per option id, or null if not published in clear yet. */
+  totals: Record<string, number> | null;
+}
+
 export interface Decision {
   id: Hex;
   contentHash: Hex;
@@ -86,6 +100,10 @@ export interface Decision {
   registeredAt: number;
   closed: boolean;
   votes: number;
+  /** Clear text, accepted by the chain only if it hashes to `contentHash`; null if not published. */
+  content: DecisionContent | null;
+  /** Result snapshots, oldest first; clear totals are accepted only if they hash to `totalsHash`. */
+  results: DecisionResult[];
   events: ChainEvent[];
 }
 

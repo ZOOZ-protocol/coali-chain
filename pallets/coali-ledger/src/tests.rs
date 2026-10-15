@@ -1,6 +1,6 @@
 use crate::{
-	mock::*, Decisions, Error, Event, LatestSnapshot, TrustAction, TrustEdges, TrustNonces, VoteCount,
-	VoteKind, Votes,
+	mock::*, DecisionContent, Decisions, Error, Event, LatestSnapshot, SnapshotTotals, TrustAction,
+	TrustEdges, TrustNonces, VoteCount, VoteKind, Votes,
 };
 use frame_support::{assert_noop, assert_ok};
 use sp_core::Pair;
@@ -144,6 +144,64 @@ fn snapshots_are_sequential_and_final_closes() {
 		assert_noop!(
 			Ledger::publish_snapshot(origin(), D1, 2, [5; 32], [6; 32], true),
 			Error::<Test>::DecisionClosed
+		);
+	});
+}
+
+fn bounded<S: frame_support::traits::Get<u32>>(b: &[u8]) -> frame_support::BoundedVec<u8, S> {
+	b.to_vec().try_into().unwrap()
+}
+
+#[test]
+fn content_is_accepted_only_if_it_matches_the_hash() {
+	new_test_ext().execute_with(|| {
+		let content = br#"{"options":[{"id":"yes","text":"Yes"}],"question":"Q?"}"#;
+		let hash = sp_io::hashing::blake2_256(content);
+		assert_noop!(
+			Ledger::publish_content(origin(), D1, bounded(content)),
+			Error::<Test>::UnknownDecision
+		);
+		assert_ok!(Ledger::register_decision(origin(), D1, hash, 21));
+		assert_noop!(
+			Ledger::publish_content(RuntimeOrigin::signed(account(&pair("Eve"))), D1, bounded(content)),
+			Error::<Test>::NotAttester
+		);
+		assert_noop!(
+			Ledger::publish_content(origin(), D1, bounded(b"{\"question\":\"other\"}")),
+			Error::<Test>::ContentMismatch
+		);
+		assert_ok!(Ledger::publish_content(origin(), D1, bounded(content)));
+		assert_eq!(DecisionContent::<Test>::get(D1).unwrap().to_vec(), content.to_vec());
+		System::assert_last_event(Event::ContentPublished { decision_id: D1 }.into());
+		assert_noop!(
+			Ledger::publish_content(origin(), D1, bounded(content)),
+			Error::<Test>::AlreadyPublished
+		);
+	});
+}
+
+#[test]
+fn totals_are_accepted_only_if_they_match_the_snapshot() {
+	new_test_ext().execute_with(|| {
+		register(D1);
+		let totals = br#"{"no":1,"yes":2}"#;
+		let hash = sp_io::hashing::blake2_256(totals);
+		assert_noop!(
+			Ledger::publish_totals(origin(), D1, 0, bounded(totals)),
+			Error::<Test>::UnknownSnapshot
+		);
+		assert_ok!(Ledger::publish_snapshot(origin(), D1, 0, [1; 32], hash, true));
+		assert_noop!(
+			Ledger::publish_totals(origin(), D1, 0, bounded(br#"{"no":0,"yes":3}"#)),
+			Error::<Test>::TotalsMismatch
+		);
+		// Allowed after the final snapshot closed the decision.
+		assert_ok!(Ledger::publish_totals(origin(), D1, 0, bounded(totals)));
+		assert_eq!(SnapshotTotals::<Test>::get(D1, 0).unwrap().to_vec(), totals.to_vec());
+		System::assert_last_event(Event::TotalsPublished { decision_id: D1, seq: 0 }.into());
+		assert_noop!(
+			Ledger::publish_totals(origin(), D1, 0, bounded(totals)),
+			Error::<Test>::AlreadyPublished
 		);
 	});
 }

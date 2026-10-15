@@ -2,12 +2,12 @@
 
 TypeScript SDK for **Coalichain**, the Proof of Trust blockchain of the [ZOOZ Protocol](https://zooz.network). Read votes, trusts, decisions and results, and verify them yourself.
 
-> **Version 0.1 — testnet.** The API may still change before 1.0. Testnet data and tokens have no value.
+> **Version 0.2 — testnet.** The API may still change before 1.0. Testnet data and tokens have no value.
 
 ## Install
 
 ```sh
-npm install https://zooz.network/sdk/zooz-protocol-sdk-0.1.0.tgz
+npm install https://zooz.network/sdk/zooz-protocol-sdk-0.2.0.tgz
 # optional, for direct chain access (@zooz-protocol/sdk/chain):
 npm install @polkadot/api
 ```
@@ -16,7 +16,7 @@ In a browser without a bundler:
 
 ```html
 <script type="module">
-  import { ExplorerClient } from "https://zooz.network/sdk/zooz-sdk-0.1.0.js";
+  import { ExplorerClient } from "https://zooz.network/sdk/zooz-sdk-0.2.0.js";
   console.log(await new ExplorerClient().stats());
 </script>
 ```
@@ -73,7 +73,7 @@ await api.disconnect();
 | Method | Returns |
 |---|---|
 | `stats()` | Blocks, votes, trusts, decisions, validators, supply, economy |
-| `decision(id)` | Decision (content hash, category, closed, vote count, events) |
+| `decision(id)` | Decision: text, results with vote totals, content hash, category, closed, vote count, events |
 | `vote(decision, voter)` | One vote commitment, or `null` |
 | `verifyVote({ decision, option, salt, voter })` | `{ match, expected, onChain }` |
 | `account(address)` | Balance, identity attested, trust received, validator status, history |
@@ -100,7 +100,17 @@ Decision ids are accepted as app UUIDs (`3f2a9c1e-…`) or on-chain ids (`0x3f2a
 | Address format | SS58, prefix 42 |
 | Token | ZOOZ, 9 decimals |
 
-## Not in 0.1 yet
+## Decision text and vote totals
+
+Apps can publish the clear text of a decision and the clear totals of each result. The chain accepts them only if they hash to the fingerprints recorded earlier, so they are guaranteed to be the originals:
+
+```ts
+const d = await zooz.decision(id);
+d.content;                 // { question, options: [{ id, text }] } or null
+d.results.at(-1)?.totals;  // { yes: 12, no: 5 } or null
+```
+
+## Not in this version yet
 
 - Submitting votes and trusts from third-party apps (today only approved apps publish, through their relayer).
 - Identity (KYC) attestations.

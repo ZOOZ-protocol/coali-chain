@@ -9,7 +9,12 @@ pub trait WeightInfo {
 	fn record_vote() -> Weight;
 	fn record_trust() -> Weight;
 	fn publish_snapshot() -> Weight;
+	fn publish_content(len: u32) -> Weight;
+	fn publish_totals(len: u32) -> Weight;
 }
+
+/// Hashing and storing one byte, generously.
+const PER_BYTE: u64 = 5_000;
 
 /// sr25519 verification is about 50 µs; doubled for margin.
 const SIGNATURE_CHECK: u64 = 100_000_000;
@@ -35,5 +40,13 @@ impl WeightInfo for () {
 	}
 	fn publish_snapshot() -> Weight {
 		Weight::from_parts(BASE, 4_000).saturating_add(RocksDbWeight::get().reads_writes(3, 3))
+	}
+	fn publish_content(len: u32) -> Weight {
+		Weight::from_parts(BASE + PER_BYTE * len as u64, 4_000 + len as u64)
+			.saturating_add(RocksDbWeight::get().reads_writes(2, 1))
+	}
+	fn publish_totals(len: u32) -> Weight {
+		Weight::from_parts(BASE + PER_BYTE * len as u64, 4_000 + len as u64)
+			.saturating_add(RocksDbWeight::get().reads_writes(2, 1))
 	}
 }

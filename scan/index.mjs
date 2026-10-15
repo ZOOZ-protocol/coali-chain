@@ -314,9 +314,37 @@ const routes = {
   async decision(p) {
     const id = String(p.id ?? "").toLowerCase();
     if (!/^0x[0-9a-f]{32}$/.test(id)) return null;
-    const [info, count] = await Promise.all([api.query.coaliLedger.decisions(id), api.query.coaliLedger.voteCount(id)]);
+    const L = api.query.coaliLedger;
+    const [info, count, content, snaps, totals] = await Promise.all([
+      L.decisions(id),
+      L.voteCount(id),
+      L.decisionContent?.(id),
+      L.snapshots.entries(id),
+      L.snapshotTotals?.entries(id) ?? [],
+    ]);
     if (info.isNone) return null;
     const d = info.unwrap();
+    const json = (bytes) => {
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        return null;
+      }
+    };
+    const totalsBySeq = new Map(totals.map(([k, v]) => [k.args[1].toNumber(), json(v.unwrap())]));
+    const results = snaps
+      .map(([k, v]) => {
+        const s = v.unwrap();
+        const seq = k.args[1].toNumber();
+        return {
+          seq,
+          isFinal: s.isFinal.isTrue,
+          publishedAt: s.publishedAt.toNumber(),
+          totalsHash: s.totalsHash.toHex(),
+          totals: totalsBySeq.get(seq) ?? null,
+        };
+      })
+      .sort((a, b) => a.seq - b.seq);
     const evs = q(`SELECT * FROM evs WHERE section='coaliLedger' AND method IN ('DecisionRegistered','VoteRecorded','SnapshotPublished')
       AND json_extract(data, '$.decisionId')=? ORDER BY n DESC, i DESC LIMIT 500`).all(id).map(parseRow);
     return {
@@ -327,6 +355,9 @@ const routes = {
       registeredAt: d.registeredAt.toNumber(),
       closed: d.closed.isTrue,
       votes: count.toNumber(),
+      // Published on chain only if it hashes to contentHash / the snapshot's totalsHash.
+      content: content?.isSome ? json(content.unwrap()) : null,
+      results,
       events: evs,
     };
   },
