@@ -142,7 +142,7 @@ In scripts, pass a keyring pair instead of a wallet account (`new Keyring({ type
 | `tokenInfo`, `listTokens`, `tokenBalance`, `balances`, `allowedAccounts` | Read. |
 | `createCollection(api, sender, { name, description?, image? })` | New NFT collection. Returns `collectionId`. |
 | `mintNft(api, sender, collection, { name, description?, image?, to? })` | New NFT (numbered 1, 2, 3…). |
-| `transferNft`, `collectionInfo`, `listNfts`, `estimateCreateCollection` | |
+| `transferNft`, `collectionInfo`, `collectionsOf`, `listNfts`, `estimateCreateCollection` | |
 | `toUnits`, `fromUnits` | Whole units ↔ raw units. |
 
 Rules enforced by the chain:
@@ -150,8 +150,11 @@ Rules enforced by the chain:
 - **Deposits**: 10 ZOOZ per token or collection (+ a little for the name), 0.01 ZOOZ per NFT. Locked, not spent: returned when destroyed.
 - **Fees**: about $0.05 per transaction, paid in ZOOZ.
 - **Receivers need a little ZOOZ** (0.001) to hold a token; otherwise the transfer fails with `token.CannotCreate`.
+- **15 different tokens per account at most** (the standard Polkadot limit, same as Asset Hub); beyond that, receiving a new token also fails with `token.CannotCreate`.
 - **Allowlist**: when restricted, transfers and mints to accounts not on the list are refused (`system.CallFiltered`), including inside batches.
 - **Fixed supply**: once locked, nobody can mint more, not even the creator.
+
+Transactions from the same account are sent one after the other, so calling several functions at once is safe.
 
 Errors are `ChainError` with a `code` (`"system.CallFiltered"`, `"balances.InsufficientBalance"`, `"wallet.Cancelled"`…) and a readable `message`.
 

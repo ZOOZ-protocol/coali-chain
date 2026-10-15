@@ -11,6 +11,7 @@ import {
   allowedAccounts,
   balances,
   collectionInfo,
+  collectionsOf,
   createCollection,
   createToken,
   estimateCreateCollection,
@@ -20,6 +21,7 @@ import {
   listTokens,
   mint,
   mintNft,
+  submit,
   tokenBalance,
   tokenInfo,
   transfer,
@@ -31,10 +33,15 @@ before(async () => {
   await cryptoWaitReady();
   api = await connect(process.env.WS ?? "ws://127.0.0.1:9944");
   const k = new Keyring({ type: "sr25519", ss58Format: 42 });
-  alice = k.addFromUri("//Alice");
-  bob = k.addFromUri("//Bob");
+  // Fresh accounts each run: an account can hold at most 15 different tokens, so reusing
+  // //Alice and //Bob would fail after a few runs on the same chain.
+  const run = Date.now();
+  alice = k.addFromUri(`//Alice//tokens-${run}`);
+  bob = k.addFromUri(`//Bob//tokens-${run}`);
   // Dave has no ZOOZ on a dev chain.
   dave = k.addFromUri("//Dave");
+  const fund = (to) => api.tx.balances.transferKeepAlive(to, 1_000n * 1_000_000_000n);
+  await submit(api, k.addFromUri("//Alice"), api.tx.utility.batchAll([fund(alice.address), fund(bob.address)]));
 });
 after(() => api?.disconnect());
 
@@ -111,6 +118,14 @@ test("NFT collection, mint, send", async () => {
     [2, bob.address, "Chien"],
   ]);
   assert.ok((await balances(api, bob.address)).nfts.some((n) => n.collection === c.collectionId && n.item === 1));
+  assert.ok((await collectionsOf(api, alice.address)).some((x) => x.id === c.collectionId));
+});
+
+test("two transactions at once from the same account both go through", async () => {
+  const { tokenId } = await createToken(api, alice, { name: "Rapide", symbol: "FAST", supply: 100 });
+  await Promise.all([transfer(api, alice, tokenId, bob.address, 1), mint(api, alice, tokenId, alice.address, 5)]);
+  assert.equal(await tokenBalance(api, tokenId, bob.address), 1n);
+  assert.equal((await tokenInfo(api, tokenId)).supply, 105n);
 });
 
 test("not enough ZOOZ", async () => {

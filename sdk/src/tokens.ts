@@ -42,11 +42,12 @@ const FRIENDLY: Record<string, string> = {
   "assets.NoPermission": "Only the token's creator can do this.",
   "assets.Unknown": "This token does not exist.",
   "assets.BadMetadata": "Name or symbol too long (50 characters max).",
-  "token.CannotCreate": "The receiver needs a little ZOOZ first (0.001 ZOOZ).",
+  "token.CannotCreate": "The receiver needs a little ZOOZ first (0.001 ZOOZ), or already holds the maximum of 15 different tokens.",
   "tokenAllowlist.NotManager": "Only the token's creator can do this.",
   "nfts.NoPermission": "Only the collection's creator can do this.",
   "nfts.AlreadyExists": "This NFT number already exists.",
   "balances.InsufficientBalance": "Not enough ZOOZ.",
+  "tx.Dropped": "The transaction was dropped by the network. Please try again.",
 };
 
 function errorOf(api: ApiPromise, err: any): ChainError {
@@ -62,8 +63,21 @@ function errorOf(api: ApiPromise, err: any): ChainError {
 
 const isPair = (s: Sender): s is KeyringPair => typeof (s as KeyringPair).sign === "function";
 
+// Per-account queue: a transaction is only signed once the previous one from the same account
+// reached the pool, otherwise both would get the same nonce and one would replace the other.
+const queues = new Map<string, Promise<unknown>>();
+
 /** Signs, sends and waits for inclusion in a block. Rejects with a `ChainError` if the chain refuses it. */
 export function submit(api: ApiPromise, sender: Sender, tx: SubmittableExtrinsic<"promise">): Promise<TxResult> {
+  const prev = queues.get(sender.address) ?? Promise.resolve();
+  let release!: () => void;
+  const chained = prev.then(() => new Promise<void>((r) => (release = r)));
+  queues.set(sender.address, chained);
+  chained.then(() => queues.get(sender.address) === chained && queues.delete(sender.address));
+  return prev.then(() => send(api, sender, tx, release));
+}
+
+function send(api: ApiPromise, sender: Sender, tx: SubmittableExtrinsic<"promise">, released: () => void): Promise<TxResult> {
   return new Promise((resolve, reject) => {
     let unsub: (() => void) | undefined;
     const cb = (r: any) => {
@@ -77,6 +91,10 @@ export function submit(api: ApiPromise, sender: Sender, tx: SubmittableExtrinsic
       if (interrupted) {
         unsub?.();
         return reject(errorOf(api, interrupted.event.data[1]));
+      }
+      if (status.isDropped || status.isInvalid || status.isUsurped) {
+        unsub?.();
+        return reject(new ChainError("tx.Dropped", FRIENDLY["tx.Dropped"]));
       }
       if (status.isInBlock) {
         unsub?.();
@@ -95,15 +113,19 @@ export function submit(api: ApiPromise, sender: Sender, tx: SubmittableExtrinsic
           .catch(reject);
       }
     };
-    const sent = isPair(sender)
-      ? tx.signAndSend(sender, cb)
-      : tx.signAndSend(sender.address, { signer: sender.signer }, cb);
-    sent.then((u: any) => (unsub = u)).catch((e: any) => {
-      const msg = String(e?.message ?? e);
-      if (/Inability to pay some fees|balance too low/i.test(msg)) reject(new ChainError("balances.InsufficientBalance", FRIENDLY["balances.InsufficientBalance"]));
-      else if (/Cancelled|Rejected by user/i.test(msg)) reject(new ChainError("wallet.Cancelled", "Signature cancelled in the wallet."));
-      else reject(e);
-    });
+    // The default nonce comes from the last block; ask the node so transactions still in its pool count.
+    const sent = api.rpc.system
+      .accountNextIndex(sender.address)
+      .then((nonce) => (isPair(sender) ? tx.signAndSend(sender, { nonce }, cb) : tx.signAndSend(sender.address, { signer: sender.signer, nonce }, cb)));
+    sent
+      .then((u: any) => (unsub = u))
+      .catch((e: any) => {
+        const msg = String(e?.message ?? e);
+        if (/Inability to pay some fees|balance too low/i.test(msg)) reject(new ChainError("balances.InsufficientBalance", FRIENDLY["balances.InsufficientBalance"]));
+        else if (/Cancelled|Rejected by user/i.test(msg)) reject(new ChainError("wallet.Cancelled", "Signature cancelled in the wallet."));
+        else reject(e);
+      })
+      .finally(released);
   });
 }
 
@@ -447,6 +469,14 @@ export async function collectionInfo(api: ApiPromise, id: number): Promise<Colle
   if (c.isNone) return null;
   const v = c.unwrap();
   return { id, owner: v.owner.toString(), items: v.items.toNumber(), details: parseDetails(m) };
+}
+
+/** Collections owned by `address`. */
+export async function collectionsOf(api: ApiPromise, address: string): Promise<CollectionInfo[]> {
+  const keys = (await api.query.nfts.collectionAccount.keys(address)) as any;
+  const ids: number[] = keys.map((k: any) => k.args[1].toNumber());
+  const infos = await Promise.all(ids.map((id) => collectionInfo(api, id)));
+  return infos.filter((c): c is CollectionInfo => !!c).sort((a, b) => b.id - a.id);
 }
 
 /** NFTs of a collection with their owner and details. */
