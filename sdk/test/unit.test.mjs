@@ -75,3 +75,15 @@ test("ZOOZ amounts", () => {
   assert.equal(parseZooz("759643640"), 759643640000000000n);
   assert.throws(() => parseZooz("1.0000000001"));
 });
+
+test("token amounts", async () => {
+  const { toUnits, fromUnits } = await import("../dist/tokens.js");
+  assert.equal(toUnits("1000.5", 2), 100050n);
+  assert.equal(toUnits(3, 0), 3n);
+  assert.equal(toUnits(0.25, 2), 25n);
+  assert.equal(toUnits(7n, 2), 7n);
+  assert.throws(() => toUnits("1.234", 2));
+  assert.throws(() => toUnits("-1", 2));
+  assert.equal(fromUnits(100050n, 2), "1000.5");
+  assert.equal(fromUnits("5", 0), "5");
+});

@@ -1,7 +1,7 @@
 {
   "name": "@zooz-protocol/sdk",
-  "version": "0.2.0",
-  "description": "TypeScript SDK for Coalichain (ZOOZ Protocol): read votes, trusts and decisions, and verify vote proofs.",
+  "version": "0.3.0",
+  "description": "TypeScript SDK for Coalichain (ZOOZ Protocol): read votes, trusts and decisions, verify vote proofs, create tokens and NFTs, connect browser wallets.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,6 +14,14 @@
     "./chain": {
       "types": "./dist/chain.d.ts",
       "import": "./dist/chain.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens.d.ts",
+      "import": "./dist/tokens.js"
+    },
+    "./wallet": {
+      "types": "./dist/wallet.d.ts",
+      "import": "./dist/wallet.js"
     }
   },
   "files": [
@@ -28,6 +36,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "test": "npm run build && node --test test/unit.test.mjs",
     "test:live": "npm run build && node --test test/live.test.mjs",
+    "test:tokens": "npm run build && node --test test/tokens.test.mjs",
     "release": "npm test && npm pack && npx -y esbuild@0.24.0 src/index.ts --bundle --format=esm --minify --target=es2020 --outfile=zooz-sdk-$npm_package_version.js"
   },
   "dependencies": {
@@ -58,6 +67,8 @@
     "proof-of-trust",
     "substrate",
     "polkadot",
-    "voting"
+    "voting",
+    "tokens",
+    "nft"
   ]
 }

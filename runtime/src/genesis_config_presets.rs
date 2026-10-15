@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use crate::{
-	AccountId, BalancesConfig, CoaliLedgerConfig, ProofOfTrustConfig, RuntimeGenesisConfig, SessionConfig,
+	configs::FIRST_ASSET_ID, AccountId, AssetsConfig, BalancesConfig, CoaliLedgerConfig, ProofOfTrustConfig, RuntimeGenesisConfig, SessionConfig,
 	SessionKeys, SudoConfig, ZoozEconomyConfig, UNIT,
 };
 
@@ -72,6 +72,7 @@ fn testnet_genesis(
 		},
 		sudo: SudoConfig { key: Some(root.clone()) },
 		coali_ledger: CoaliLedgerConfig { attesters: vec![root] },
+		assets: AssetsConfig { next_asset_id: Some(FIRST_ASSET_ID) },
 	})
 }
 

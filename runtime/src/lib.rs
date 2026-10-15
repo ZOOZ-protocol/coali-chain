@@ -69,7 +69,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	//   `spec_version`, and `authoring_version` are the same between Wasm and native.
 	// This value is set to 100 to notify Polkadot-JS App (https://polkadot.js.org/apps) to use
 	//   the compatible custom types.
-	spec_version: 201,
+	spec_version: 203,
 	impl_version: 1,
 	apis: apis::RUNTIME_API_VERSIONS,
 	transaction_version: 1,
@@ -233,4 +233,18 @@ mod runtime {
 
 	#[runtime::pallet_index(11)]
 	pub type ZoozEconomy = pallet_zooz_economy;
+
+	// Tokens and NFTs anyone can create, paid in ZOOZ.
+	#[runtime::pallet_index(12)]
+	pub type Assets = pallet_assets;
+
+	#[runtime::pallet_index(13)]
+	pub type Nfts = pallet_nfts;
+
+	#[runtime::pallet_index(14)]
+	pub type TokenAllowlist = pallet_token_allowlist;
+
+	// Several actions signed at once (e.g. create + name + mint a token).
+	#[runtime::pallet_index(15)]
+	pub type Utility = pallet_utility;
 }

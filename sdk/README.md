@@ -1,14 +1,14 @@
 # ZOOZ SDK
 
-TypeScript SDK for **Coalichain**, the Proof of Trust blockchain of the [ZOOZ Protocol](https://zooz.network). Read votes, trusts, decisions and results, and verify them yourself.
+TypeScript SDK for **Coalichain**, the Proof of Trust blockchain of the [ZOOZ Protocol](https://zooz.network). Read votes, trusts, decisions and results and verify them yourself; create tokens and NFTs; connect browser wallets.
 
-> **Version 0.2 — testnet.** The API may still change before 1.0. Testnet data and tokens have no value.
+> **Version 0.3 — testnet.** The API may still change before 1.0. Testnet data and tokens have no value.
 
 ## Install
 
 ```sh
-npm install https://zooz.network/sdk/zooz-protocol-sdk-0.2.0.tgz
-# optional, for direct chain access (@zooz-protocol/sdk/chain):
+npm install https://zooz.network/sdk/zooz-protocol-sdk-0.3.0.tgz
+# optional, for direct chain access, tokens and wallets (/chain, /tokens, /wallet):
 npm install @polkadot/api
 ```
 
@@ -16,7 +16,7 @@ In a browser without a bundler:
 
 ```html
 <script type="module">
-  import { ExplorerClient } from "https://zooz.network/sdk/zooz-sdk-0.2.0.js";
+  import { ExplorerClient } from "https://zooz.network/sdk/zooz-sdk-0.3.0.js";
   console.log(await new ExplorerClient().stats());
 </script>
 ```
@@ -110,8 +110,58 @@ d.content;                 // { question, options: [{ id, text }] } or null
 d.results.at(-1)?.totals;  // { yes: 12, no: 5 } or null
 ```
 
+## Tokens and NFTs
+
+Anyone can create a token (a club currency, shares of a building, loyalty points…) or an NFT collection, paid in ZOOZ. Everything happens in **one signature**.
+
+```ts
+import { connect } from "@zooz-protocol/sdk/chain";
+import { connectWallet } from "@zooz-protocol/sdk/wallet";
+import { createToken, estimateCreateToken, transfer, balances } from "@zooz-protocol/sdk/tokens";
+
+const api = await connect();
+const { accounts } = await connectWallet("My app", { api }); // SubWallet, Talisman or Polkadot.js
+const me = accounts[0];
+
+const opts = { name: "Club des parents", symbol: "PARENT", decimals: 0, supply: 500 };
+const cost = await estimateCreateToken(api, me.address, opts); // { deposit, fee, total } in planck
+const { tokenId } = await createToken(api, me, opts);
+await transfer(api, me, tokenId, "5F…", 10);
+console.log(await balances(api, me.address)); // ZOOZ, tokens, NFTs
+```
+
+In scripts, pass a keyring pair instead of a wallet account (`new Keyring({ type: "sr25519" }).addFromUri(seed)`).
+
+| Function | What it does |
+|---|---|
+| `createToken(api, sender, { name, symbol, decimals?, supply, fixedSupply?, allowlist? })` | Creates, names and mints a token. Returns `tokenId`. |
+| `estimateCreateToken(api, address, opts)` | ZOOZ needed: deposit (returned if the token is destroyed) + fee. |
+| `mint`, `transfer`, `burn` | Amounts in whole units (`"1.5"`) or raw `bigint`. |
+| `allowList(api, sender, id, { add?, remove?, restricted? })` | Reserve the token to approved accounts. |
+| `fixSupply(api, sender, id)` | Locks the supply forever. |
+| `tokenInfo`, `listTokens`, `tokenBalance`, `balances`, `allowedAccounts` | Read. |
+| `createCollection(api, sender, { name, description?, image? })` | New NFT collection. Returns `collectionId`. |
+| `mintNft(api, sender, collection, { name, description?, image?, to? })` | New NFT (numbered 1, 2, 3…). |
+| `transferNft`, `collectionInfo`, `listNfts`, `estimateCreateCollection` | |
+| `toUnits`, `fromUnits` | Whole units ↔ raw units. |
+
+Rules enforced by the chain:
+
+- **Deposits**: 10 ZOOZ per token or collection (+ a little for the name), 0.01 ZOOZ per NFT. Locked, not spent: returned when destroyed.
+- **Fees**: about $0.05 per transaction, paid in ZOOZ.
+- **Receivers need a little ZOOZ** (0.001) to hold a token; otherwise the transfer fails with `token.CannotCreate`.
+- **Allowlist**: when restricted, transfers and mints to accounts not on the list are refused (`system.CallFiltered`), including inside batches.
+- **Fixed supply**: once locked, nobody can mint more, not even the creator.
+
+Errors are `ChainError` with a `code` (`"system.CallFiltered"`, `"balances.InsufficientBalance"`, `"wallet.Cancelled"`…) and a readable `message`.
+
+### `@zooz-protocol/sdk/wallet`
+
+`connectWallet(appName, { walletId?, api?, onAccountsChange? })` opens the wallet's approval popup and returns `{ wallet, accounts }`; each account can be passed as `sender`. `installedWallets()` lists the wallets present in the browser, `WALLETS` gives their install links. Passing `api` sends the chain description to the wallet so it shows readable transactions.
+
 ## Not in this version yet
 
+- A wallet built into apps (today: SubWallet, Talisman or Polkadot.js extension).
 - Submitting votes and trusts from third-party apps (today only approved apps publish, through their relayer).
 - Identity (KYC) attestations.
 - The BSC ↔ Coalichain bridge.
@@ -130,6 +180,7 @@ node examples/watch.mjs
 ```sh
 npm test           # offline: encodings match the relayer
 npm run test:live  # against the public testnet
+npm run test:tokens  # tokens and NFTs, against a local `coali-node --dev`
 ```
 
 License: Apache-2.0 — ZOOZ Protocol.

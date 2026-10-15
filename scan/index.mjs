@@ -237,6 +237,102 @@ function earnings(b) {
 const lim = (v, d = 25) => Math.min(100, Math.max(1, Number(v) || d));
 const before = (v) => (v === undefined || v === null || v === "" ? Number.MAX_SAFE_INTEGER : Number(v));
 
+// ---------- tokens & NFTs, read from chain state (runtime 202+) ----------
+const utf8 = (bytes) => {
+  try {
+    return bytes?.toUtf8?.() ?? "";
+  } catch {
+    return "";
+  }
+};
+const acc = (a) => encodeAddress(a, SS58);
+const createdAt = (section, field, id) =>
+  q(`SELECT n, x, ts FROM evs WHERE section=? AND method='Created' AND json_extract(data, ?)=? ORDER BY n DESC LIMIT 1`)
+    .get(section, `$.${field}`, String(id)) ?? null;
+
+function tokenOf(id, d, m, restricted, fixedSupply) {
+  return {
+    id,
+    name: utf8(m?.name),
+    symbol: utf8(m?.symbol),
+    decimals: m?.decimals.toNumber() ?? 0,
+    supply: d.supply.toString(),
+    holders: d.accounts.toNumber(),
+    owner: acc(d.owner),
+    admin: acc(d.admin),
+    issuer: acc(d.issuer),
+    minBalance: d.minBalance.toString(),
+    status: d.status.toString(),
+    restricted,
+    fixedSupply,
+    created: createdAt("assets", "assetId", id),
+  };
+}
+
+async function allTokens() {
+  if (!api.query.assets) return [];
+  const [assets, metas, restricted, fixed] = await Promise.all([
+    api.query.assets.asset.entries(),
+    api.query.assets.metadata.entries(),
+    api.query.tokenAllowlist.restricted.keys(),
+    api.query.tokenAllowlist.fixedSupply?.keys() ?? [],
+  ]);
+  const meta = new Map(metas.map(([k, m]) => [k.args[0].toNumber(), m]));
+  const locked = new Set(restricted.map((k) => k.args[0].toNumber()));
+  const capped = new Set(fixed.map((k) => k.args[0].toNumber()));
+  return assets
+    .map(([k, v]) => {
+      const id = k.args[0].toNumber();
+      return tokenOf(id, v.unwrap(), meta.get(id), locked.has(id), capped.has(id));
+    })
+    .sort((a, b) => b.id - a.id);
+}
+
+const parseJson = (s) => {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+};
+// NFT metadata is free text; when it is JSON, its name / image / description are shown.
+const nftMeta = (opt) => {
+  if (!opt?.isSome) return null;
+  const data = utf8(opt.unwrap().data);
+  const j = parseJson(data);
+  return { data, name: j?.name ?? null, image: j?.image ?? null, description: j?.description ?? null };
+};
+
+async function allCollections() {
+  if (!api.query.nfts) return [];
+  const [cols, metas] = await Promise.all([api.query.nfts.collection.entries(), api.query.nfts.collectionMetadataOf.entries()]);
+  const meta = new Map(metas.map(([k, m]) => [k.args[0].toNumber(), m]));
+  return cols
+    .map(([k, v]) => {
+      const id = k.args[0].toNumber();
+      const c = v.unwrap();
+      return { id, owner: acc(c.owner), items: c.items.toNumber(), metadata: nftMeta(meta.get(id)), created: createdAt("nfts", "collection", id) };
+    })
+    .sort((a, b) => b.id - a.id);
+}
+
+// Tokens and NFTs held by an account.
+async function holdings(addr) {
+  if (!api.query.assets) return { tokens: [], nfts: [] };
+  const [list, nftKeys] = await Promise.all([allTokens(), api.query.nfts.account.keys(addr)]);
+  const bals = list.length ? await api.query.assets.account.multi(list.map((t) => [t.id, addr])) : [];
+  const tokens = list
+    .map((t, i) => ({ id: t.id, name: t.name, symbol: t.symbol, decimals: t.decimals, balance: bals[i].isSome ? bals[i].unwrap().balance.toString() : "0", owner: t.owner === addr }))
+    .filter((t) => t.balance !== "0" || t.owner);
+  const nfts = nftKeys.slice(0, 200).map((k) => ({ collection: k.args[1].toNumber(), item: k.args[2].toNumber() }));
+  return { tokens, nfts };
+}
+
+const tokenEvents = (section, field, id, p) =>
+  q(`SELECT * FROM evs WHERE section=? AND json_extract(data, ?)=? AND n < ? ORDER BY n DESC, i DESC LIMIT ?`)
+    .all(section, `$.${field}`, String(id), before(p.before), lim(p.limit, 50))
+    .map(parseRow);
+
 const routes = {
   async stats() {
     const [best, validators, issuance, minTrust, price, targetFee, split, reward, halving, fuel, names] = await Promise.all([
@@ -270,6 +366,8 @@ const routes = {
       decisions: count("coaliLedger", "DecisionRegistered"),
       snapshots: count("coaliLedger", "SnapshotPublished"),
       accounts: q("SELECT COUNT(DISTINCT addr) c FROM acts").get().c,
+      tokens: count("assets", "Created") - count("assets", "Destroyed"),
+      collections: count("nfts", "Created") - count("nfts", "Destroyed"),
       validators: validators.map((v) => encodeAddress(v, SS58)),
       minTrust: minTrust.toNumber(),
       issuance: issuance.toString(),
@@ -362,6 +460,57 @@ const routes = {
     };
   },
 
+  tokens: allTokens,
+  collections: allCollections,
+
+  async token(p) {
+    const id = Number(p.id);
+    if (!Number.isInteger(id) || id < 0 || !api.query.assets) return null;
+    const [d, m, restricted, fixed, accounts, allowed] = await Promise.all([
+      api.query.assets.asset(id),
+      api.query.assets.metadata(id),
+      api.query.tokenAllowlist.restricted(id),
+      api.query.tokenAllowlist.fixedSupply?.(id),
+      api.query.assets.account.entries(id),
+      api.query.tokenAllowlist.allowed.keys(id),
+    ]);
+    if (d.isNone) return null;
+    const holders = accounts
+      .map(([k, v]) => ({ address: acc(k.args[1]), balance: v.unwrap().balance.toString() }))
+      .sort((a, b) => (BigInt(b.balance) > BigInt(a.balance) ? 1 : BigInt(b.balance) < BigInt(a.balance) ? -1 : 0))
+      .slice(0, 100);
+    return {
+      ...tokenOf(id, d.unwrap(), m, restricted.isSome, !!fixed?.isSome),
+      holdersTop: holders,
+      allowlist: allowed.map((k) => acc(k.args[1])),
+      events: tokenEvents("assets", "assetId", id, p),
+    };
+  },
+
+  async collection(p) {
+    const id = Number(p.id);
+    if (!Number.isInteger(id) || id < 0 || !api.query.nfts) return null;
+    const [c, m, items, metas] = await Promise.all([
+      api.query.nfts.collection(id),
+      api.query.nfts.collectionMetadataOf(id),
+      api.query.nfts.item.entries(id),
+      api.query.nfts.itemMetadataOf.entries(id),
+    ]);
+    if (c.isNone) return null;
+    const meta = new Map(metas.map(([k, v]) => [k.args[1].toNumber(), v]));
+    return {
+      id,
+      owner: acc(c.unwrap().owner),
+      items: items
+        .map(([k, v]) => ({ id: k.args[1].toNumber(), owner: acc(v.unwrap().owner), metadata: nftMeta(meta.get(k.args[1].toNumber())) }))
+        .sort((a, b) => a.id - b.id)
+        .slice(0, 500),
+      metadata: nftMeta(m),
+      created: createdAt("nfts", "collection", id),
+      events: tokenEvents("nfts", "collection", id, p),
+    };
+  },
+
   block(p) {
     const b = /^0x[0-9a-fA-F]{64}$/.test(p.id)
       ? q("SELECT * FROM blocks WHERE hash=?").get(p.id.toLowerCase())
@@ -434,6 +583,7 @@ const routes = {
       produced: q("SELECT COUNT(*) c FROM blocks WHERE author=?").get(addr).c,
       total: q("SELECT COUNT(*) c FROM acts WHERE addr=?").get(addr).c,
       history,
+      ...(await holdings(addr)),
     };
   },
 

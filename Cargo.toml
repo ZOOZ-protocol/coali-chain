@@ -11,6 +11,7 @@ members = [
     "pallets/coali-ledger",
     "pallets/proof-of-trust",
     "pallets/zooz-economy",
+    "pallets/token-allowlist",
     "runtime",
 ]
 resolver = "2"
@@ -29,6 +30,10 @@ frame-system-rpc-runtime-api = { git = "https://github.com/paritytech/polkadot-s
 frame-try-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 futures = { version = "0.3.31" }
 jsonrpsee = { version = "0.24.11" }
+pallet-assets = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-nfts = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-utility = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-token-allowlist = { path = "./pallets/token-allowlist", default-features = false }
 pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }

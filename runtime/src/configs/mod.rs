@@ -28,23 +28,34 @@ use frame_support::{
 	derive_impl,
 	dispatch::DispatchClass,
 	parameter_types,
-	traits::{ConstBool, ConstU128, ConstU32, ConstU64, ConstU8, VariantCountOf},
+	traits::{
+		fungibles::roles::Inspect as TokenRoles, AsEnsureOriginWithArg, ConstBool, ConstU128,
+		ConstU32, ConstU64, ConstU8, Contains, VariantCountOf,
+	},
 	weights::{
 		constants::{RocksDbWeight, WEIGHT_REF_TIME_PER_SECOND},
 		Weight,
 	},
 };
-use frame_system::limits::{BlockLength, BlockWeights};
+use frame_system::{
+	limits::{BlockLength, BlockWeights},
+	EnsureRoot, EnsureSigned,
+};
+use pallet_nfts::PalletFeatures;
 use pallet_transaction_payment::{ConstFeeMultiplier, Multiplier};
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
-use sp_runtime::{traits::One, Perbill};
+use sp_runtime::{
+	traits::{One, StaticLookup, Verify},
+	Perbill,
+};
 use sp_version::RuntimeVersion;
 
 // Local module imports
 use super::{
 	AccountId, Aura, Balance, Balances, Block, BlockNumber, Hash, Nonce, PalletInfo, Runtime,
 	RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask,
-	Authorship, ProofOfTrust, System, EXISTENTIAL_DEPOSIT, SLOT_DURATION, UNIT, VERSION,
+	Assets, Authorship, OriginCaller, ProofOfTrust, Signature, System, TokenAllowlist, DAYS, EXISTENTIAL_DEPOSIT,
+	MILLI_UNIT, SLOT_DURATION, UNIT, VERSION,
 };
 
 const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
@@ -69,7 +80,8 @@ parameter_types! {
 ///
 /// This can be a tuple of types, each implementing `OnRuntimeUpgrade`.
 #[allow(unused_parens)]
-type SingleBlockMigrations = ();
+type SingleBlockMigrations =
+	(pallet_assets::migration::next_asset_id::SetNextAssetId<FirstAssetId, Runtime>,);
 
 /// The default types are being injected by [`derive_impl`](`frame_support::derive_impl`) from
 /// [`SoloChainDefaultConfig`](`struct@frame_system::config_preludes::SolochainDefaultConfig`),
@@ -100,6 +112,8 @@ impl frame_system::Config for Runtime {
 	type SS58Prefix = SS58Prefix;
 	type MaxConsumers = frame_support::traits::ConstU32<16>;
 	type SingleBlockMigrations = SingleBlockMigrations;
+	/// Restricted tokens only reach accounts on their allowlist.
+	type BaseCallFilter = TokenTransferRules;
 }
 
 impl pallet_aura::Config for Runtime {
@@ -253,4 +267,126 @@ impl pallet_zooz_economy::Config for Runtime {
 	type IsApp = ApprovedApps;
 	type Unit = ConstU128<UNIT>;
 	type ReferenceWeight = ZoozReferenceWeight;
+}
+
+/// Token ids are handed out in order, starting here.
+pub const FIRST_ASSET_ID: u32 = 1;
+
+parameter_types! {
+	pub const FirstAssetId: u32 = FIRST_ASSET_ID;
+	// Deposits are locked while the token or NFT exists and returned when it is destroyed.
+	pub const AssetDeposit: Balance = 10 * UNIT;
+	pub const AssetAccountDeposit: Balance = 10 * MILLI_UNIT;
+	pub const MetadataDepositBase: Balance = 100 * MILLI_UNIT;
+	pub const MetadataDepositPerByte: Balance = MILLI_UNIT;
+	pub const ApprovalDeposit: Balance = EXISTENTIAL_DEPOSIT;
+	pub const CollectionDeposit: Balance = 10 * UNIT;
+	pub const ItemDeposit: Balance = 10 * MILLI_UNIT;
+	pub NftFeatures: PalletFeatures = PalletFeatures::all_enabled();
+	pub const NftMaxDeadline: BlockNumber = 365 * DAYS;
+}
+
+impl pallet_assets::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Balance = Balance;
+	type AssetId = u32;
+	type AssetIdParameter = codec::Compact<u32>;
+	type ReserveData = ();
+	type Currency = Balances;
+	type CreateOrigin = AsEnsureOriginWithArg<EnsureSigned<AccountId>>;
+	type ForceOrigin = EnsureRoot<AccountId>;
+	type AssetDeposit = AssetDeposit;
+	type AssetAccountDeposit = AssetAccountDeposit;
+	type MetadataDepositBase = MetadataDepositBase;
+	type MetadataDepositPerByte = MetadataDepositPerByte;
+	type ApprovalDeposit = ApprovalDeposit;
+	type StringLimit = ConstU32<50>;
+	type Holder = ();
+	type Freezer = ();
+	type Extra = ();
+	type CallbackHandle = ();
+	type AssetIdAllocator = pallet_assets::AutoIncAssetId<Runtime>;
+	type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
+	type RemoveItemsLimit = ConstU32<1000>;
+	#[cfg(feature = "runtime-benchmarks")]
+	type BenchmarkHelper = ();
+}
+
+impl pallet_nfts::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type CollectionId = u32;
+	type ItemId = u32;
+	type Currency = Balances;
+	type ForceOrigin = EnsureRoot<AccountId>;
+	type CreateOrigin = AsEnsureOriginWithArg<EnsureSigned<AccountId>>;
+	type Locker = ();
+	type CollectionDeposit = CollectionDeposit;
+	type ItemDeposit = ItemDeposit;
+	type MetadataDepositBase = MetadataDepositBase;
+	type AttributeDepositBase = MetadataDepositBase;
+	type DepositPerByte = MetadataDepositPerByte;
+	type StringLimit = ConstU32<256>;
+	type KeyLimit = ConstU32<64>;
+	type ValueLimit = ConstU32<256>;
+	type ApprovalsLimit = ConstU32<20>;
+	type ItemAttributesApprovalsLimit = ConstU32<30>;
+	type MaxTips = ConstU32<10>;
+	type MaxDeadlineDuration = NftMaxDeadline;
+	type MaxAttributesPerCall = ConstU32<10>;
+	type Features = NftFeatures;
+	type OffchainSignature = Signature;
+	type OffchainPublic = <Signature as Verify>::Signer;
+	type WeightInfo = pallet_nfts::weights::SubstrateWeight<Runtime>;
+	#[cfg(feature = "runtime-benchmarks")]
+	type Helper = ();
+	type BlockNumberProvider = System;
+}
+
+impl pallet_utility::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type PalletsOrigin = OriginCaller;
+	type WeightInfo = pallet_utility::weights::SubstrateWeight<Runtime>;
+}
+
+/// Owner or admin of a token manage its allowlist.
+pub struct AssetManagers;
+impl pallet_token_allowlist::TokenManagers<u32, AccountId> for AssetManagers {
+	fn is_manager(asset: &u32, who: &AccountId) -> bool {
+		Assets::owner(*asset).as_ref() == Some(who) || Assets::admin(*asset).as_ref() == Some(who)
+	}
+}
+
+impl pallet_token_allowlist::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type AssetId = u32;
+	type Managers = AssetManagers;
+	type MaxAccountsPerCall = ConstU32<100>;
+}
+
+/// Refuses token transfers and mints whose receiver is not allowed by the token's allowlist, and
+/// mints of tokens whose supply is locked.
+/// Root (`force_transfer` through sudo) is not filtered.
+pub struct TokenTransferRules;
+impl Contains<RuntimeCall> for TokenTransferRules {
+	fn contains(call: &RuntimeCall) -> bool {
+		use pallet_assets::Call as A;
+		let RuntimeCall::Assets(call) = call else { return true };
+		let (id, to) = match call {
+			A::transfer { id, target, .. } | A::transfer_keep_alive { id, target, .. } => (id, target),
+			A::transfer_all { id, dest, .. } => (id, dest),
+			A::transfer_approved { id, destination, .. } => (id, destination),
+			A::mint { id, beneficiary, .. } => {
+				if !TokenAllowlist::can_mint(&id.0) {
+					return false;
+				}
+				(id, beneficiary)
+			},
+			_ => return true,
+		};
+		match <Runtime as frame_system::Config>::Lookup::lookup(to.clone()) {
+			Ok(who) => TokenAllowlist::can_receive(&id.0, &who),
+			Err(_) => true,
+		}
+	}
 }

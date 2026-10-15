@@ -2,6 +2,7 @@
 const API = location.hostname === "localhost" ? "http://localhost:8091/api" : "/api";
 const APPS = "https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app";
 let DEC = 9, SYM = "ZOOZ", PRICE = 0, LABELS = {}, STATS = null, statsAt = 0, timer = null;
+let TK = {}, tkAt = 0;
 
 // ---------- language ----------
 function getLang() {
@@ -37,14 +38,28 @@ async function stats(force) {
   }
   return STATS;
 }
+// Created tokens (id -> name, symbol, decimals), refreshed every minute.
+async function tokenInfo(force) {
+  if (force || Date.now() - tkAt > 60_000) {
+    const list = await get("/tokens").catch(() => null);
+    if (list) TK = Object.fromEntries(list.map((x) => [x.id, x]));
+    tkAt = Date.now();
+  }
+  return TK;
+}
 const sep = () => (L === "fr" ? " " : ",");
-function tokens(raw, digits = 4) {
+function units(raw, dec, digits = 4) {
   if (raw === null || raw === undefined) return "—";
-  const v = BigInt(raw), base = 10n ** BigInt(DEC);
-  const int = v / base, frac = (v % base).toString().padStart(DEC, "0").slice(0, digits).replace(/0+$/, "");
+  const v = BigInt(raw), base = 10n ** BigInt(dec);
+  const int = v / base, frac = dec ? (v % base).toString().padStart(dec, "0").slice(0, digits).replace(/0+$/, "") : "";
   if (int === 0n && v > 0n && !frac) return `<0${L === "fr" ? "," : "."}${"0".repeat(digits - 1)}1`;
   return `${int.toString().replace(/\B(?=(\d{3})+(?!\d))/g, sep())}${frac ? (L === "fr" ? "," : ".") + frac : ""}`;
 }
+const tokens = (raw, digits = 4) => units(raw, DEC, digits);
+const tokName = (id) => TK[id]?.symbol || `#${id}`;
+const tokLink = (id) => `<a href="/token/${esc(id)}">${esc(tokName(id))}</a>`;
+const tokAmt = (id, raw) => `<b>${units(raw, TK[id]?.decimals ?? 0, 4)}</b> ${tokLink(id)}`;
+const nftLink = (c, i) => `<a href="/collection/${esc(c)}">${t("NFT", "NFT")} #${esc(i)}</a>`;
 const amount = (raw, digits = 4) => `${tokens(raw, digits)} ${SYM}`;
 const toNum = (raw) => Number(BigInt(raw ?? 0)) / 10 ** DEC;
 const usd = (v, d = 2) => "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -85,7 +100,7 @@ const ev = (x, k) => (x.events || []).find((e) => `${e.section}.${e.method}` ===
 const evs = (x, k) => (x.events || []).filter((e) => `${e.section}.${e.method}` === k);
 
 // ---------- transaction decoding ----------
-const MODULES = { coaliLedger: "Coali Ledger", proofOfTrust: "Proof of Trust", zoozEconomy: "ZOOZ Economy", balances: "Balances", session: "Session", sudo: "Sudo", grandpa: "GRANDPA" };
+const MODULES = { utility: t("Batch", "Groupé"), assets: "Tokens", nfts: "NFT", tokenAllowlist: t("Token allowlist", "Liste blanche"), coaliLedger: "Coali Ledger", proofOfTrust: "Proof of Trust", zoozEconomy: "ZOOZ Economy", balances: "Balances", session: "Session", sudo: "Sudo", grandpa: "GRANDPA" };
 function methodName(x) {
   const k = `${x.section}.${x.method}`;
   const m = {
@@ -94,6 +109,11 @@ function methodName(x) {
     "coaliLedger.publishSnapshot": t("Publish Results", "Résultats"), "sudo.sudo": "Admin", "session.setKeys": "Set Keys",
     "coaliLedger.publishContent": t("Decision Text", "Texte de décision"), "coaliLedger.publishTotals": t("Result Totals", "Totaux"),
     "zoozEconomy.chooseApp": t("Choose App", "Choix d'app"), "utility.batch": "Batch", "utility.batchAll": "Batch",
+    "assets.create": t("Create Token", "Créer un token"), "assets.setMetadata": t("Token Name", "Nom du token"), "assets.mint": t("Mint Token", "Émettre"),
+    "assets.transfer": t("Token Transfer", "Envoi de token"), "assets.transferKeepAlive": t("Token Transfer", "Envoi de token"), "assets.transferAll": t("Token Transfer", "Envoi de token"),
+    "assets.burn": t("Burn Token", "Détruire des tokens"), "nfts.create": t("Create NFT Collection", "Créer une collection NFT"), "nfts.mint": t("Mint NFT", "Créer un NFT"),
+    "nfts.transfer": t("NFT Transfer", "Envoi de NFT"), "nfts.setMetadata": t("NFT Details", "Détails du NFT"), "nfts.setCollectionMetadata": t("Collection Details", "Détails de la collection"),
+    "tokenAllowlist.fixSupply": t("Lock Supply", "Bloquer la quantité"), "tokenAllowlist.allow": t("Allowlist Add", "Liste blanche +"), "tokenAllowlist.remove": t("Allowlist Remove", "Liste blanche −"), "tokenAllowlist.setRestricted": t("Token Rules", "Règles du token"),
   }[k];
   if (m) return m;
   const s = (x.method || "").replace(/([A-Z])/g, " $1");
@@ -105,6 +125,10 @@ function flow(x) {
   if (tr && x.section === "balances") return { to: addr(tr.data.to), value: tr.data.amount };
   const tr2 = x.section === "sudo" ? ev(x, "balances.Transfer") : null;
   if (tr2) return { to: addr(tr2.data.to), value: tr2.data.amount };
+  const at = ev(x, "assets.Transferred") ?? ev(x, "assets.Issued");
+  if (at) return { to: addr(at.data.to ?? at.data.owner), value: "0", text: tokAmt(at.data.assetId, at.data.amount) };
+  const nt = ev(x, "nfts.Transferred") ?? ev(x, "nfts.Issued");
+  if (nt) return { to: addr(nt.data.to ?? nt.data.owner), value: "0", text: nftLink(nt.data.collection, nt.data.item) };
   return { to: `<span class="name">📄 ${esc(MODULES[x.section] ?? x.section)}</span>`, value: "0" };
 }
 const DIR = (x, me) => {
@@ -165,6 +189,35 @@ function eventLabel(e, me) {
       return `${t("New session", "Nouvelle session")} ${esc(d.sessionIndex)}`;
     case "system.CodeUpdated":
       return `⬆️ ${t("Runtime upgraded", "Mise à jour du runtime")}`;
+    case "assets.Created":
+      return `🪙 ${t("New token", "Nouveau token")} ${tokLink(d.assetId)} ${t("created by", "créé par")} ${addr(d.creator)}`;
+    case "assets.MetadataSet":
+      return `🪙 ${t("Token", "Token")} ${tokLink(d.assetId)} ${t("named", "nommé")} <b>${esc(TK[d.assetId]?.name ?? "")}</b>`;
+    case "assets.Issued":
+      return `✨ ${tokAmt(d.assetId, d.amount)} ${t("issued to", "émis pour")} ${addr(d.owner)}`;
+    case "assets.Transferred":
+      if (me && d.to === me) return `<span class="tag ok">${t("Received", "Reçu")}</span> ${tokAmt(d.assetId, d.amount)} ${t("from", "de")} ${addr(d.from)}`;
+      if (me && d.from === me) return `<span class="tag warn">${t("Sent", "Envoyé")}</span> ${tokAmt(d.assetId, d.amount)} ${t("to", "à")} ${addr(d.to)}`;
+      return `${tokAmt(d.assetId, d.amount)} ${t("from", "de")} ${addr(d.from)} ${t("to", "à")} ${addr(d.to)}`;
+    case "assets.Burned":
+      return `🔥 ${tokAmt(d.assetId, d.balance)} ${t("destroyed by", "détruits par")} ${addr(d.owner)}`;
+    case "tokenAllowlist.RestrictionSet":
+      return d.restricted ? `🔒 ${tokLink(d.asset)} : ${t("only allowlisted accounts can receive it", "seuls les comptes de la liste blanche peuvent le recevoir")}` : `🔓 ${tokLink(d.asset)} : ${t("anyone can receive it again", "tout le monde peut de nouveau le recevoir")}`;
+    case "tokenAllowlist.SupplyFixed":
+      return `🔐 ${t("Supply of", "Quantité de")} ${tokLink(d.asset)} ${t("locked forever: no more can be created", "bloquée pour toujours : plus aucun ne peut être créé")}`;
+    case "tokenAllowlist.AccountAllowed":
+      return `✅ ${addr(d.who)} ${t("added to the allowlist of", "ajouté à la liste blanche de")} ${tokLink(d.asset)}`;
+    case "tokenAllowlist.AccountRemoved":
+      return `➖ ${addr(d.who)} ${t("removed from the allowlist of", "retiré de la liste blanche de")} ${tokLink(d.asset)}`;
+    case "nfts.Created":
+      return `🖼️ ${t("New NFT collection", "Nouvelle collection NFT")} <a href="/collection/${esc(d.collection)}">#${esc(d.collection)}</a> ${t("by", "par")} ${addr(d.creator)}`;
+    case "nfts.Issued":
+      return `🖼️ ${nftLink(d.collection, d.item)} ${t("created for", "créé pour")} ${addr(d.owner)}`;
+    case "nfts.Transferred":
+      return `🖼️ ${nftLink(d.collection, d.item)} ${t("sent from", "envoyé de")} ${addr(d.from)} ${t("to", "à")} ${addr(d.to)}`;
+    case "nfts.CollectionMetadataSet":
+    case "nfts.ItemMetadataSet":
+      return `🖼️ ${t("Details of", "Détails de")} <a href="/collection/${esc(d.collection)}">${t("collection", "la collection")} #${esc(d.collection)}</a> ${t("updated", "mis à jour")}`;
   }
   return null;
 }
@@ -246,11 +299,12 @@ function chrome() {
   document.documentElement.lang = L;
   document.getElementById("b-en").className = L === "en" ? "on" : "";
   document.getElementById("b-fr").className = L === "fr" ? "on" : "";
-  const nav = { home: t("Home", "Accueil"), blocks: t("Blocks", "Blocs"), txs: "Transactions", votes: t("Votes & Trusts", "Votes & Trusts"), validators: t("Validators", "Validateurs") };
+  const nav = { home: t("Home", "Accueil"), blocks: t("Blocks", "Blocs"), txs: "Transactions", tokens: "Tokens", votes: t("Votes & Trusts", "Votes & Trusts"), validators: t("Validators", "Validateurs") };
   document.querySelectorAll("[data-nav]").forEach((a) => {
     a.textContent = nav[a.dataset.nav];
     const p = location.pathname;
-    a.className = (a.dataset.nav === "home" ? p === "/" : p.startsWith("/" + a.dataset.nav)) ? "on" : "";
+    const tokenPages = a.dataset.nav === "tokens" && /^\/(token|collection)\//.test(p);
+    a.className = (a.dataset.nav === "home" ? p === "/" : p.startsWith("/" + a.dataset.nav) || tokenPages) ? "on" : "";
   });
   document.getElementById("hq").placeholder = t("Search by address / txn hash / block", "Adresse / hash de transaction / bloc");
   document.getElementById("hsearch").style.visibility = location.pathname === "/" ? "hidden" : "visible";
@@ -326,7 +380,7 @@ function txTable(rows, me) {
       if (!x.hash) return `<tr><td class="muted sm">${t("network", "réseau")}</td><td><span class="method">${t("Block event", "Événement")}</span></td><td>${blk(x.n)}</td><td class="muted">${ago(x.ts)}</td><td colspan="${me ? 5 : 4}"></td><td class="wrap-ok sm">${summary(x, me)}</td></tr>`;
       const f = flow(x);
       return `<tr><td>${x.ok ? "" : "⚠️ "}${txLink(x)}</td><td><span class="method" title="${esc(x.section)}.${esc(x.method)}">${esc(methodName(x))}</span></td><td>${blk(x.n)}</td><td class="muted">${ago(x.ts)}</td>
-        <td>${addr(x.signer)}</td>${me ? `<td>${DIR(x, me)}</td>` : ""}<td>${f.to}</td><td>${amount(f.value, 4)}</td><td class="sm muted">${tokens(x.fee, 5)}</td><td class="wrap-ok sm">${summary(x, me)}</td></tr>`;
+        <td>${addr(x.signer)}</td>${me ? `<td>${DIR(x, me)}</td>` : ""}<td>${f.to}</td><td>${f.text ?? amount(f.value, 4)}</td><td class="sm muted">${tokens(x.fee, 5)}</td><td class="wrap-ok sm">${summary(x, me)}</td></tr>`;
     }).join("")}</tbody></table>`;
 }
 
@@ -383,7 +437,7 @@ async function txPage(id) {
     ${kvRow(t("Interacted With (To)", "Interagit avec (À)"), f.to)}
     ${kvRow(t("Method", "Méthode"), `<span class="method">${esc(methodName(x))}</span> <span class="mono sm muted">${esc(x.section)}.${esc(x.method)}</span>`)}
     <hr>
-    ${kvRow(t("Value", "Valeur"), `${amount(f.value)} ${BigInt(f.value) > 0n && PRICE ? `<span class="muted">(${usdOf(f.value, 2)})</span>` : ""}`)}
+    ${kvRow(t("Value", "Valeur"), f.text ? f.text : `${amount(f.value)} ${BigInt(f.value) > 0n && PRICE ? `<span class="muted">(${usdOf(f.value, 2)})</span>` : ""}`)}
     ${kvRow(t("Transaction Fee", "Frais de transaction"), `${amount(x.fee, 6)} ${PRICE && x.fee ? `<span class="muted">(${usdOf(x.fee, 4)})</span>` : ""}${split ? `<div class="sm muted">${split.author}% ${t("to the validator", "au validateur")} · ${split.foundation}% ${t("to the foundation", "à la fondation")} · ${split.app}% ${t("to the app", "à l'app")}</div>` : ""}`, t("Fees are pegged to the dollar", "Les frais sont indexés sur le dollar"))}
     ${kvRow(t("Input Data", "Données d'entrée"), `<details><summary>${t("show raw parameters", "afficher les paramètres bruts")}</summary><pre>${esc(JSON.stringify(x.args, null, 2))}</pre></details>`)}
   </div>
@@ -418,6 +472,10 @@ async function accountPage(id, p) {
       ${a.candidateFor ? `<div><div class="k">${t("Linked person", "Personne liée")}</div><div>${addr(a.candidateFor)}</div></div>` : ""}
     </div></div>
   </div>
+  ${a.tokens?.length || a.nfts?.length ? `<div class="card scroll" style="margin-bottom:18px"><div class="card-h">${t("Tokens & NFTs", "Tokens & NFT")}</div><table><tbody>
+    ${(a.tokens ?? []).map((x) => `<tr><td>🪙 ${tokCell(x)}</td><td><b>${units(x.balance, x.decimals, 4)}</b> ${esc(x.symbol)}</td><td>${x.owner ? `<span class="tag acc">${t("Creator", "Créateur")}</span>` : ""}</td></tr>`).join("")}
+    ${(a.nfts ?? []).map((n) => `<tr><td>🖼️ <a href="/collection/${n.collection}">${t("Collection", "Collection")} #${n.collection}</a></td><td>NFT #${n.item}</td><td></td></tr>`).join("")}
+  </tbody></table></div>` : ""}
   <div class="card scroll"><div class="card-h">${t("Transactions", "Transactions")} <span class="muted sm">${t("Latest", "Les")} ${a.history.length} ${t("of", "plus récentes sur")} ${num(a.total)}</span></div>${txTable(a.history, a.address)}${a.history.length === 25 ? pager(`/account/${a.address}`, last) : ""}</div>`;
 }
 
@@ -546,6 +604,92 @@ async function votesPage(p) {
   ${rows.length === 50 ? pager(`/votes?tab=${tab}`, rows[rows.length - 1]) : ""}</div>`;
 }
 
+// ---------- tokens & NFTs ----------
+const CREATE_URL = "https://zooz.network/create";
+const tokCell = (x) => `<a href="/token/${x.id}"><b>${esc(x.name || t("Unnamed token", "Token sans nom"))}</b></a> <span class="muted">${esc(x.symbol)}</span>`;
+const lockTag = () => `<span class="tag acc" title="${esc(t("Only accounts approved by the creator can receive it", "Seuls les comptes approuvés par le créateur peuvent le recevoir"))}">🔒 ${t("Allowlist", "Liste blanche")}</span>`;
+const nftName = (m, fallback) => esc(m?.name || fallback);
+const fixedTag = () => `<span class="tag" title="${esc(t("Nobody can create more of it", "Personne ne peut en créer davantage"))}">🔐 ${t("Fixed supply", "Quantité fixe")}</span>`;
+
+async function tokensPage(p) {
+  const tab = p.tab === "nfts" ? "nfts" : "tokens";
+  const tabs = `<div class="tabs"><a href="/tokens" class="${tab === "tokens" ? "on" : ""}">Tokens</a><a href="/tokens?tab=nfts" class="${tab === "nfts" ? "on" : ""}">${t("NFT collections", "Collections NFT")}</a></div>`;
+  const note = `<div class="note">${t(
+    `Anyone can create a token or an NFT collection on Coalichain, paid in ZOOZ: a club currency, shares of a building, works of art… The creator decides the supply and can reserve the token to approved accounts (allowlist).`,
+    `Tout le monde peut créer un token ou une collection NFT sur Coalichain, payé en ZOOZ : une monnaie de club, des parts d'un immeuble, des œuvres d'art… Le créateur choisit la quantité et peut réserver le token à des comptes approuvés (liste blanche).`,
+  )} <a href="${CREATE_URL}" target="_blank">${t("Create my token →", "Créer mon token →")}</a></div>`;
+  if (tab === "tokens") {
+    const list = await get("/tokens");
+    TK = Object.fromEntries(list.map((x) => [x.id, x]));
+    tkAt = Date.now();
+    app().innerHTML = `${title("Tokens", `${num(list.length)} ${t("tokens", "tokens")}`)}${tabs}${note}
+    <div class="card scroll">${list.length ? `<table><thead><tr><th>#</th><th>Token</th><th>${t("Total supply", "Quantité totale")}</th><th>${t("Holders", "Détenteurs")}</th><th>${t("Creator", "Créateur")}</th><th>${t("Rules", "Règles")}</th><th>${t("Created", "Créé")}</th></tr></thead><tbody>
+      ${list.map((x) => `<tr><td class="muted">${x.id}</td><td>${tokCell(x)}</td><td>${units(x.supply, x.decimals, 2)}</td><td>${num(x.holders)}</td><td>${addr(x.owner)}</td><td>${x.restricted ? lockTag() : `<span class="muted sm">${t("open", "libre")}</span>`} ${x.fixedSupply ? fixedTag() : ""}</td><td class="muted">${x.created ? ago(x.created.ts) : "—"}</td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">${t("No token yet.", "Aucun token pour l'instant.")}</div>`}</div>`;
+    return;
+  }
+  const cols = await get("/collections");
+  app().innerHTML = `${title(t("NFT collections", "Collections NFT"), `${num(cols.length)} ${t("collections", "collections")}`)}${tabs}${note}
+  <div class="card scroll">${cols.length ? `<table><thead><tr><th>#</th><th>${t("Collection", "Collection")}</th><th>NFT</th><th>${t("Creator", "Créateur")}</th><th>${t("Created", "Créée")}</th></tr></thead><tbody>
+    ${cols.map((c) => `<tr><td class="muted">${c.id}</td><td><a href="/collection/${c.id}"><b>${nftName(c.metadata, t("Collection", "Collection") + " #" + c.id)}</b></a></td><td>${num(c.items)}</td><td>${addr(c.owner)}</td><td class="muted">${c.created ? ago(c.created.ts) : "—"}</td></tr>`).join("")}
+  </tbody></table>` : `<div class="empty">${t("No collection yet.", "Aucune collection pour l'instant.")}</div>`}</div>`;
+}
+
+async function tokenPage(id, p) {
+  const x = await get(`/token/${encodeURIComponent(id)}${p.before ? "?before=" + p.before : ""}`);
+  if (!x) return notFound();
+  TK[x.id] = x;
+  const supply = BigInt(x.supply || 0);
+  const pct = (b) => (supply ? ((Number((BigInt(b) * 10000n) / supply) / 100).toLocaleString(L === "fr" ? "fr-FR" : "en-US") + " %") : "—");
+  const evRows = x.events.filter((e) => eventLabel(e));
+  app().innerHTML = `${title(`🪙 ${esc(x.name || t("Token", "Token"))}`, `<span class="tag">${esc(x.symbol || "#" + x.id)}</span> ${x.restricted ? lockTag() : ""} ${x.fixedSupply ? fixedTag() : ""} ${x.status !== "Live" ? `<span class="tag warn">${esc(x.status)}</span>` : ""}`)}
+  <div class="grid2">
+    <div class="card"><div class="card-h">${t("Overview", "Aperçu")}</div><div class="mini">
+      <div><div class="k">${t("Total supply", "Quantité totale")}</div><div class="bal">${units(x.supply, x.decimals, x.decimals)} ${esc(x.symbol)}</div></div>
+      <div><div class="k">${t("Holders", "Détenteurs")}</div><div>${num(x.holders)}</div></div>
+      <div><div class="k">${t("Supply", "Quantité")}</div><div>${x.fixedSupply ? fixedTag() : t("The creator can create more", "Le créateur peut en créer davantage")}</div></div>
+      <div><div class="k">${t("Transfer rule", "Règle de transfert")}</div><div>${x.restricted ? `${lockTag()} <span class="sm">${num(x.allowlist.length)} ${t("approved accounts", "comptes approuvés")}</span>` : t("Anyone can receive it", "Tout le monde peut le recevoir")}</div></div>
+    </div></div>
+    <div class="card"><div class="card-h">${t("Profile", "Profil")}</div><div class="mini">
+      <div><div class="k">${t("Creator (owner)", "Créateur (propriétaire)")}</div><div>${addr(x.owner, 8)}</div></div>
+      <div><div class="k">${t("Token ID", "ID du token")} ${help(t("Use this number to add the token in SubWallet or Talisman", "Utilisez ce numéro pour ajouter le token dans SubWallet ou Talisman"))}</div><div><b>${x.id}</b> ${copyBtn(String(x.id))} · ${x.decimals} ${t("decimals", "décimales")}</div></div>
+      <div><div class="k">${t("Created", "Créé")}</div><div>${x.created ? `${t("block", "bloc")} ${blk(x.created.n)} <span class="muted">(${ago(x.created.ts)})</span>` : "—"}</div></div>
+    </div></div>
+  </div>
+  <div class="note">${t("To see this token in your wallet (SubWallet, Talisman): Manage tokens → Import token → network Coalichain testnet → asset ID", "Pour voir ce token dans votre wallet (SubWallet, Talisman) : Gérer les tokens → Importer un token → réseau Coalichain testnet → ID")} <b>${x.id}</b>. <a href="https://zooz.network/wallets" target="_blank">${t("Guide →", "Guide →")}</a></div>
+  <div class="grid2">
+    <div class="card scroll"><div class="card-h">${t("Top holders", "Principaux détenteurs")}</div>
+      ${x.holdersTop.length ? `<table><thead><tr><th>#</th><th>${t("Address", "Adresse")}</th><th>${t("Quantity", "Quantité")}</th><th>%</th></tr></thead><tbody>
+      ${x.holdersTop.map((h, i) => `<tr><td class="muted">${i + 1}</td><td>${addr(h.address)}</td><td>${units(h.balance, x.decimals, 4)}</td><td class="muted">${pct(h.balance)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">—</div>`}</div>
+    ${x.restricted || x.allowlist.length ? `<div class="card scroll"><div class="card-h">${t("Allowlist", "Liste blanche")} (${num(x.allowlist.length)})</div>
+      ${x.allowlist.length ? `<table><tbody>${x.allowlist.map((a) => `<tr><td>${addr(a, 10)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">—</div>`}</div>` : "<div></div>"}
+  </div>
+  <div class="card scroll"><div class="card-h">${t("Activity", "Activité")}</div>
+    ${evRows.length ? `<table><thead><tr><th>${t("What happened", "Ce qui s'est passé")}</th><th>${t("Block", "Bloc")}</th><th>${t("Age", "Âge")}</th><th></th></tr></thead><tbody>
+    ${evRows.map((e) => `<tr><td class="wrap-ok">${eventLabel(e)}</td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td>${e.x >= 0 ? `<a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">—</div>`}
+    ${x.events.length === 50 ? pager(`/token/${x.id}`, x.events[x.events.length - 1]) : ""}</div>`;
+}
+
+async function collectionPage(id, p) {
+  const c = await get(`/collection/${encodeURIComponent(id)}${p.before ? "?before=" + p.before : ""}`);
+  if (!c) return notFound();
+  const evRows = c.events.filter((e) => eventLabel(e));
+  const img = (m) => (m?.image && /^(https?:|ipfs:)/.test(m.image) ? `<img src="${esc(m.image.replace(/^ipfs:\/\//, "https://ipfs.io/ipfs/"))}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;vertical-align:middle;margin-right:8px">` : "");
+  app().innerHTML = `${title(`🖼️ ${nftName(c.metadata, t("Collection", "Collection") + " #" + c.id)}`, `<span class="tag">NFT · #${c.id}</span>`)}
+  <div class="card kv">
+    ${c.metadata?.description ? kvRow(t("Description", "Description"), `<span dir="auto">${esc(c.metadata.description)}</span>`) : ""}
+    ${kvRow(t("Creator (owner)", "Créateur (propriétaire)"), addr(c.owner, 8, true))}
+    ${kvRow("NFT", `<b>${num(c.items.length)}</b>`)}
+    ${kvRow(t("Created", "Créée"), c.created ? `${t("block", "bloc")} ${blk(c.created.n)} <span class="muted">(${ago(c.created.ts)})</span>` : "—")}
+    ${c.metadata && !c.metadata.name ? kvRow(t("Details", "Détails"), `<span class="mono sm">${esc(c.metadata.data)}</span>`) : ""}
+  </div>
+  <div class="card scroll" style="margin-top:18px"><div class="card-h">NFT</div>
+    ${c.items.length ? `<table><thead><tr><th>#</th><th>${t("Name", "Nom")}</th><th>${t("Owner", "Propriétaire")}</th></tr></thead><tbody>
+    ${c.items.map((i) => `<tr><td class="muted">${i.id}</td><td>${img(i.metadata)}<span dir="auto">${nftName(i.metadata, "NFT #" + i.id)}</span></td><td>${addr(i.owner)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">${t("No NFT yet.", "Aucun NFT pour l'instant.")}</div>`}</div>
+  <div class="card scroll" style="margin-top:18px"><div class="card-h">${t("Activity", "Activité")}</div>
+    ${evRows.length ? `<table><tbody>${evRows.map((e) => `<tr><td class="wrap-ok">${eventLabel(e)}</td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td>${e.x >= 0 ? `<a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">—</div>`}</div>`;
+}
+
 async function validatorsPage() {
   const s = await stats();
   const accts = await Promise.all(s.validators.map((v) => get(`/account/${v}?limit=1`)));
@@ -586,7 +730,7 @@ async function route() {
   window.scrollTo(0, 0);
   loading();
   try {
-    await stats();
+    await Promise.all([stats(), tokenInfo()]);
     topPrice();
     if (!page) await home();
     else if (page === "blocks") await blocksPage(p);
@@ -597,6 +741,9 @@ async function route() {
     else if (page === "decision") await decisionPage(decodeURIComponent(id));
     else if (page === "votes") await votesPage(p);
     else if (page === "validators") await validatorsPage();
+    else if (page === "tokens") await tokensPage(p);
+    else if (page === "token") await tokenPage(decodeURIComponent(id), p);
+    else if (page === "collection") await collectionPage(decodeURIComponent(id), p);
     else if (page === "verify") await verifyPage(p);
     else notFound();
   } catch (e) {

@@ -26,6 +26,10 @@ frame-system = { workspace = true }
 frame-try-runtime = { optional = true, workspace = true }
 
 # frame pallets
+pallet-assets = { workspace = true }
+pallet-nfts = { workspace = true }
+pallet-utility = { workspace = true }
+pallet-token-allowlist = { workspace = true }
 pallet-aura = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-grandpa = { workspace = true }
@@ -67,6 +71,9 @@ pallet-authorship = { workspace = true }
 [build-dependencies]
 substrate-wasm-builder = { optional = true, workspace = true, default-features = true }
 
+[dev-dependencies]
+sp-io = { workspace = true, default-features = true }
+
 [features]
 default = ["std"]
 std = [
@@ -79,6 +86,10 @@ std = [
 	"frame-system-rpc-runtime-api/std",
 	"frame-system/std",
 	"frame-try-runtime?/std",
+	"pallet-assets/std",
+	"pallet-nfts/std",
+	"pallet-utility/std",
+	"pallet-token-allowlist/std",
 	"pallet-aura/std",
 	"pallet-balances/std",
 	"pallet-grandpa/std",
@@ -114,6 +125,10 @@ runtime-benchmarks = [
 	"frame-support/runtime-benchmarks",
 	"frame-system-benchmarking/runtime-benchmarks",
 	"frame-system/runtime-benchmarks",
+	"pallet-assets/runtime-benchmarks",
+	"pallet-nfts/runtime-benchmarks",
+	"pallet-utility/runtime-benchmarks",
+	"pallet-token-allowlist/runtime-benchmarks",
 	"pallet-balances/runtime-benchmarks",
 	"pallet-grandpa/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
@@ -130,6 +145,10 @@ try-runtime = [
 	"frame-support/try-runtime",
 	"frame-system/try-runtime",
 	"frame-try-runtime/try-runtime",
+	"pallet-assets/try-runtime",
+	"pallet-nfts/try-runtime",
+	"pallet-utility/try-runtime",
+	"pallet-token-allowlist/try-runtime",
 	"pallet-aura/try-runtime",
 	"pallet-balances/try-runtime",
 	"pallet-grandpa/try-runtime",
