@@ -118,3 +118,28 @@ a.mono{white-space:nowrap}
 .btn{justify-self:start;background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}
 @media(max-width:700px){.vf{grid-template-columns:1fr;gap:4px}}
 .res{margin-bottom:12px}.res-l{display:flex;justify-content:space-between;gap:12px;margin-bottom:4px}.res-bar{height:8px;border-radius:4px;background:var(--line)}.res-bar i{display:block;height:100%;border-radius:4px;background:var(--link)}
+
+/* mobile-fix */
+.card,.scroll,.cols,.lift{min-width:0;max-width:100%}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.mono{overflow-wrap:anywhere;word-break:break-all}
+@media(max-width:700px){
+  .wrap,.in{padding:0 12px}
+  body{overflow-x:hidden}
+  nav{gap:0;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+  nav a{padding:8px 10px;font-size:13px}
+  .row{flex-wrap:wrap;align-items:flex-start}
+  .c1{flex:1 1 calc(100% - 56px)}
+  .c2{flex:1 1 100%;margin-top:2px}
+  .row .pill{margin-left:56px}
+  .card.kv,.kv{overflow-wrap:anywhere}
+  .kv .r>div:last-child{min-width:0}
+  table{font-size:12.5px}
+  td.wrap-ok{min-width:0}
+  .ptitle .sub{font-size:12.5px}
+  .hero{padding:28px 0 52px}
+  .hero h1{font-size:18px}
+  footer .wrap{gap:10px}
+  a.mono,.mono{white-space:normal}
+}
+
