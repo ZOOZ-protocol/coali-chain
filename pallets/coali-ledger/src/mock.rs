@@ -74,7 +74,6 @@ impl pallet_coali_ledger::OnAttesterRemoved<AccountId32> for RecordRemoval {
 }
 
 impl pallet_coali_ledger::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
 	type AdminOrigin = EnsureRoot<AccountId32>;
 	type Signature = MultiSignature;
 	type Signer = MultiSigner;

@@ -18,17 +18,24 @@ services:
       - --rpc-methods=safe
       - --rpc-cors=all
       - --rpc-max-connections=500
-      # Public limits: per connection, calls per minute, batch length and subscriptions. Internal
-      # services (docker networks) are exempt; visitors are identified by Caddy's X-Forwarded-For.
+      # Public limits: per connection, calls per minute, batch length and subscriptions. Only the
+      # internal services, at fixed addresses on the backend network, are exempt; proxy headers
+      # are not trusted (visitors all come through Caddy, on the default network).
       - --rpc-rate-limit=1800
-      - --rpc-rate-limit-whitelisted-ips=172.16.0.0/12
-      - --rpc-rate-limit-trust-proxy-headers
+      - --rpc-rate-limit-whitelisted-ips=10.77.0.11/32
+      - --rpc-rate-limit-whitelisted-ips=10.77.0.12/32
+      - --rpc-rate-limit-whitelisted-ips=10.77.0.13/32
       - --rpc-max-batch-request-len=50
       - --rpc-max-subscriptions-per-connection=256
       - --state-pruning=archive
       - --blocks-pruning=archive-canonical
     ports:
       - "30333:30333"
+    networks:
+      default: {}
+      backend:
+        ipv4_address: 10.77.0.2
+        aliases: [rpc-internal]
     volumes:
       - rpc-data:/data
       - ./spec:/spec:ro
@@ -62,9 +69,13 @@ services:
     build: ../../faucet
     container_name: coali-faucet
     restart: unless-stopped
+    networks:
+      default: {}
+      backend:
+        ipv4_address: 10.77.0.12
     env_file: faucet.env
     environment:
-      CHAIN_WS: ws://rpc:9944
+      CHAIN_WS: ws://rpc-internal:9944
       PORT: "8080"
     volumes:
       - faucet-data:/data
@@ -74,8 +85,12 @@ services:
     build: ../../scan
     container_name: coali-scan
     restart: unless-stopped
+    networks:
+      default: {}
+      backend:
+        ipv4_address: 10.77.0.11
     environment:
-      CHAIN_WS: ws://rpc:9944
+      CHAIN_WS: ws://rpc-internal:9944
       DB_PATH: /data/scan.db
       # Name tags shown in the explorer (address=Name, comma-separated).
       LABELS: 5Ece69BkcArVJVVRhrezvMYFf6rtyT5ohsyRChqizQhEFcxM=Popolitica,5Gxe4rSwUpDXHkZQxw48uweZGpXvJLL4EWqHAsUkQJvg16at=Faucet
@@ -87,12 +102,23 @@ services:
     build: ../../watchdog
     container_name: coali-watchdog
     restart: unless-stopped
+    networks:
+      default: {}
+      backend:
+        ipv4_address: 10.77.0.13
     env_file: watchdog.env
     environment:
-      CHAIN_WS: ws://rpc:9944
+      CHAIN_WS: ws://rpc-internal:9944
     volumes:
       - watchdog-data:/data
     depends_on: [rpc]
+
+networks:
+  # Internal services reach the node here, from fixed addresses exempt from the rate limit.
+  backend:
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24
 
 volumes:
   rpc-data:

@@ -101,7 +101,6 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		type Currency: Balanced<Self::AccountId, Balance = u128> + Mutate<Self::AccountId>;
 		/// Sets prices, parameters and spends from buckets (the foundation).
 		type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;

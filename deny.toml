@@ -1,0 +1,17 @@
+# cargo deny: dependency sources and bans. Known vulnerabilities are checked by cargo audit (CI
+# job "dependencies"); licenses are those of the Polkadot SDK release and are reviewed with it.
+
+[graph]
+all-features = false
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/paritytech/polkadot-sdk"]
+
+[bans]
+# The Polkadot SDK pulls several major versions of some crates; reported, not failed.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true

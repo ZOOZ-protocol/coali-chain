@@ -83,6 +83,7 @@ parameter_types! {
 type SingleBlockMigrations = (
 	pallet_assets::migration::next_asset_id::SetNextAssetId<FirstAssetId, Runtime>,
 	pallet_proof_of_trust::migrations::MigrateV0ToV1<Runtime, LedgerAttesters>,
+	pallet_coali_ledger::migrations::MigrateV0ToV1<Runtime>,
 );
 
 /// Identity attesters at the 204 upgrade: the ledger attesters (one key for now; to be moved to
@@ -300,7 +301,6 @@ impl pallet_session::Config for Runtime {
 }
 
 impl pallet_proof_of_trust::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
 	type TrustScore = super::CoaliLedger;
 	type MaxValidators = PotMaxValidators;
@@ -316,7 +316,6 @@ parameter_types! {
 }
 
 impl pallet_coali_ledger::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
 	type Signature = super::Signature;
 	type Signer = <super::Signature as sp_runtime::traits::Verify>::Signer;
@@ -355,7 +354,6 @@ parameter_types! {
 }
 
 impl pallet_zooz_economy::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
 	type BlockAuthor = CurrentAuthor;
@@ -453,13 +451,12 @@ impl pallet_token_allowlist::TokenManagers<u32, AccountId> for AssetManagers {
 }
 
 impl pallet_token_allowlist::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type AssetId = u32;
 	type Managers = AssetManagers;
 	type MaxAccountsPerCall = ConstU32<100>;
 }
 
-/// Symbols nobody may give a token (after [`normalized`]), and words its name may not contain:
+/// Symbols nobody may give a token (after [`skeleton`]), and words its name may not contain:
 /// fake ZOOZ, stablecoins and major coins are the usual scam on a new chain. Root (through
 /// `force_set_metadata`) can still name the foundation's own tokens.
 const RESERVED_SYMBOLS: &[&str] = &[
@@ -469,23 +466,88 @@ const RESERVED_SYMBOLS: &[&str] = &[
 const RESERVED_WORDS: &[&str] =
 	&["ZOOZ", "COALI", "TETHER", "USDCOIN", "BITCOIN", "ETHEREUM", "POLKADOT", "BINANCE", "TRUVOT", "POPOLITICA"];
 
-/// Uppercase letters and digits only, with 0 read as O and 1 as I, so `z00z` or `Co-ali` match.
-fn normalized(text: &[u8]) -> alloc::vec::Vec<u8> {
-	text.iter()
-		.filter(|c| c.is_ascii_alphanumeric())
-		.map(|c| match c.to_ascii_uppercase() {
-			b'0' => b'O',
-			b'1' => b'I',
-			c => c,
-		})
-		.collect()
+/// Characters that display as nothing (or reorder text): refused anywhere in a token's name.
+fn is_invisible(c: char) -> bool {
+	matches!(c as u32,
+		0x00..=0x1F | 0x7F..=0x9F | 0xAD | 0x34F | 0x61C | 0x115F | 0x1160 | 0x17B4 | 0x17B5 |
+		0x180B..=0x180F | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 |
+		0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0000..=0xE0FFF)
 }
 
-fn is_reserved(name: &[u8], symbol: &[u8]) -> bool {
-	let (name, symbol) = (normalized(name), normalized(symbol));
+/// The Latin capital or digit a character passes for: Latin letters with accents, Greek and
+/// Cyrillic look-alikes, full-width and "mathematical" letters. Other characters (Hebrew,
+/// punctuation…) are ignored when comparing names.
+fn latin_lookalike(c: char) -> Option<u8> {
+	let cp = c as u32;
+	let ascii = |b: u8| Some(b.to_ascii_uppercase());
+	match cp {
+		0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A => ascii(cp as u8),
+		0xFF10..=0xFF19 => Some(b'0' + (cp - 0xFF10) as u8),
+		0xFF21..=0xFF3A => Some(b'A' + (cp - 0xFF21) as u8),
+		0xFF41..=0xFF5A => Some(b'A' + (cp - 0xFF41) as u8),
+		// Mathematical alphanumeric symbols: 13 alphabets of A–Z a–z, then digits.
+		0x1D400..=0x1D6A3 => Some(b'A' + ((cp - 0x1D400) % 52 % 26) as u8),
+		0x1D7CE..=0x1D7FF => Some(b'0' + ((cp - 0x1D7CE) % 10) as u8),
+		_ => Some(match cp {
+			0xC0..=0xC5 | 0xE0..=0xE5 | 0x100..=0x105 | 0x391 | 0x3B1 | 0x410 | 0x430 => b'A',
+			0x392 | 0x412 | 0x432 => b'B',
+			0xC7 | 0xE7 | 0x106..=0x10D | 0x421 | 0x441 | 0x3F2 | 0x3F9 => b'C',
+			0x10E..=0x111 | 0x501 => b'D',
+			0xC8..=0xCB | 0xE8..=0xEB | 0x112..=0x11B | 0x395 | 0x3B5 | 0x415 | 0x435 | 0x401 | 0x451 => b'E',
+			0x397 | 0x41D | 0x43D => b'H',
+			0xCC..=0xCF | 0xEC..=0xEF | 0x128..=0x131 | 0x399 | 0x3B9 | 0x406 | 0x456 | 0x4C0 => b'I',
+			0x408 | 0x458 => b'J',
+			0x39A | 0x3BA | 0x41A | 0x43A => b'K',
+			0x39C | 0x41C | 0x43C => b'M',
+			0xD1 | 0xF1 | 0x143..=0x148 | 0x39D => b'N',
+			0xD2..=0xD6 | 0xD8 | 0xF2..=0xF6 | 0xF8 | 0x14C..=0x151 | 0x39F | 0x3BF | 0x41E | 0x43E | 0x3A9 =>
+				b'O',
+			0x3A1 | 0x3C1 | 0x420 | 0x440 => b'P',
+			0x51A | 0x51B => b'Q',
+			0x15A..=0x161 | 0x405 | 0x455 => b'S',
+			0x3A4 | 0x3C4 | 0x422 | 0x442 => b'T',
+			0xD9..=0xDC | 0xF9..=0xFC | 0x168..=0x173 | 0x3C5 => b'U',
+			0x3BD | 0x474 | 0x475 => b'V',
+			0x51C | 0x51D => b'W',
+			0x3A7 | 0x3C7 | 0x425 | 0x445 => b'X',
+			0xDD | 0xFD | 0xFF | 0x176..=0x178 | 0x3A5 | 0x423 | 0x443 | 0x4AE | 0x4AF => b'Y',
+			0x179..=0x17E | 0x396 => b'Z',
+			_ => return None,
+		}),
+	}
+}
+
+/// A name's look-alike skeleton in Latin capitals, with 0 read as O and 1 as I, so `z00z`,
+/// `Co-ali`, `ZΟΟZ` (Greek) or `ＺＯＯＺ` (full width) match ZOOZ. None if the name is not
+/// valid UTF-8 or contains invisible characters.
+fn skeleton(text: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+	let text = core::str::from_utf8(text).ok()?;
+	let mut out = alloc::vec::Vec::new();
+	for c in text.chars() {
+		if is_invisible(c) {
+			return None;
+		}
+		if let Some(b) = latin_lookalike(c) {
+			out.push(match b {
+				b'0' => b'O',
+				b'1' => b'I',
+				b => b,
+			});
+		}
+	}
+	Some(out)
+}
+
+/// Whether a token may take this name and symbol: the symbol is 1 to 12 Latin letters or digits,
+/// the name has no invisible character, and neither passes for a reserved name.
+fn token_name_allowed(name: &[u8], symbol: &[u8]) -> bool {
+	if symbol.is_empty() || symbol.len() > 12 || !symbol.iter().all(u8::is_ascii_alphanumeric) {
+		return false;
+	}
+	let (Some(name), Some(symbol)) = (skeleton(name), skeleton(symbol)) else { return false };
 	let contains = |text: &[u8], word: &str| text.windows(word.len()).any(|w| w == word.as_bytes());
-	RESERVED_SYMBOLS.iter().any(|s| symbol == s.as_bytes()) ||
-		RESERVED_WORDS.iter().any(|w| contains(&name, w) || contains(&symbol, w))
+	!RESERVED_SYMBOLS.iter().any(|s| symbol == s.as_bytes()) &&
+		!RESERVED_WORDS.iter().any(|w| contains(&name, w) || contains(&symbol, w))
 }
 
 /// Rules on the token calls of plain accounts (root, through sudo, is not filtered):
@@ -499,7 +561,8 @@ fn is_reserved(name: &[u8], symbol: &[u8]) -> bool {
 /// - once anyone but the owner holds a token, it can no longer be destroyed or renamed;
 /// - a locked token (`fix_supply`, the creator renouncing) can no longer be minted, destroyed,
 ///   renamed or restricted;
-/// - reserved names and symbols are refused.
+/// - reserved names and symbols are refused, including look-alikes in other alphabets, and
+///   symbols are Latin letters and digits only.
 pub struct TokenTransferRules;
 impl Contains<RuntimeCall> for TokenTransferRules {
 	fn contains(call: &RuntimeCall) -> bool {
@@ -545,7 +608,7 @@ impl Contains<RuntimeCall> for TokenTransferRules {
 				A::touch_other { .. } => false,
 				A::start_destroy { id } => !locked(id.0) && !held_by_others(id.0),
 				A::set_metadata { id, name, symbol, .. } =>
-					!locked(id.0) && !held_by_others(id.0) && !is_reserved(name, symbol),
+					!locked(id.0) && !held_by_others(id.0) && token_name_allowed(name, symbol),
 				A::clear_metadata { id } => !locked(id.0) && !held_by_others(id.0),
 				_ => true,
 			},

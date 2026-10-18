@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Tests and lints run against the native runtime; the wasm is built by the srtool job.
+  SKIP_WASM_BUILD: 1
+
+jobs:
+  rust:
+    name: Rust tests and clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (warnings are errors)
+        run: >
+          cargo clippy --locked -p pallet-coali-ledger -p pallet-proof-of-trust -p pallet-zooz-economy
+          -p pallet-token-allowlist -p coali-runtime --all-targets -- -D warnings
+      - name: Pallet and runtime tests (security simulations included)
+        run: >
+          cargo test --locked -p pallet-coali-ledger -p pallet-proof-of-trust -p pallet-zooz-economy
+          -p pallet-token-allowlist -p coali-runtime --tests
+      - name: Benchmarks compile and pass their tests
+        run: cargo test --locked -p pallet-coali-ledger --features runtime-benchmarks
+      - name: Node builds
+        run: cargo check --locked -p coali-node
+
+  dependencies:
+    name: Rust dependencies (cargo audit, cargo deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans sources
+
+  javascript:
+    name: SDK and services
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [sdk, relayer, faucet, scan, watchdog]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Known vulnerabilities in production dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Syntax
+        if: matrix.dir != 'sdk'
+        run: for f in *.mjs; do node --check "$f"; done
+      - name: SDK unit tests
+        if: matrix.dir == 'sdk'
+        run: npm test
+
+  runtime-wasm:
+    name: Reproducible runtime (srtool)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with srtool
+        id: srtool
+        uses: chevdor/srtool-actions@v0.9.2
+        with:
+          chain: coali
+          runtime_dir: runtime
+          package: coali-runtime
+      - name: Hashes
+        run: |
+          echo '${{ steps.srtool.outputs.json }}' | jq . > srtool.json
+          jq '{version: .runtimes.compressed.subwasm.core_version, blake2_256: .runtimes.compressed.blake2_256, proposal_hash: .runtimes.compressed.subwasm.proposal_hash}' srtool.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coali-runtime-wasm
+          path: |
+            ${{ steps.srtool.outputs.wasm_compressed }}
+            srtool.json

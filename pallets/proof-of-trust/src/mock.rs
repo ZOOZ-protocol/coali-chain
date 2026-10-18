@@ -39,7 +39,7 @@ impl frame_system::Config for Test {
 
 thread_local! {
 	/// (truster, trusted) pairs, standing in for the ledger.
-	static TRUST: RefCell<BTreeSet<(u64, u64)>> = RefCell::new(BTreeSet::new());
+	static TRUST: RefCell<BTreeSet<(u64, u64)>> = const { RefCell::new(BTreeSet::new()) };
 }
 
 /// `truster` trusts `trusted`, as the ledger would record it (and tell proof of trust).
@@ -80,7 +80,6 @@ parameter_types! {
 }
 
 impl pallet_proof_of_trust::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
 	type AdminOrigin = EnsureRoot<u64>;
 	type TrustScore = MockTrust;
 	type MaxValidators = MaxValidators;

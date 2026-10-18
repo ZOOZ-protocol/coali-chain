@@ -84,3 +84,6 @@ try-runtime = [
 	"coali-runtime/try-runtime",
 	"sp-runtime/try-runtime",
 ]
+
+[lints]
+workspace = true

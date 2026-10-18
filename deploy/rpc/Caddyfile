@@ -15,13 +15,14 @@
 	}
 }
 
+# Argument: the image sources besides the site itself.
 (csp) {
-	header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: {args[0]}; connect-src 'self' https://rpc.{$DOMAIN} wss://rpc.{$DOMAIN}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' {args[0]}; connect-src 'self' https://rpc.{$DOMAIN} wss://rpc.{$DOMAIN}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 }
 
 # Dotfiles and deployment files are never served (single-page fallbacks would otherwise answer 200).
 (hidden) {
-	@hidden path /.* */.* /docker-compose.yml /Dockerfile /*.env /*.env.* /package.json /package-lock.json
+	@hidden path /.* */.* /Caddyfile /docker-compose.yml /Dockerfile /*.env /*.env.* /*.service /package.json /package-lock.json
 	handle @hidden {
 		respond 404
 	}
@@ -29,7 +30,7 @@
 
 {$DOMAIN} {
 	import headers
-	import csp
+	import csp data:
 	import hidden
 	handle /coali-testnet-raw.json {
 		root * /srv/spec
@@ -48,13 +49,18 @@
 
 rpc.{$DOMAIN} {
 	import headers
-	reverse_proxy rpc:9944
+	# The node does not trust proxy headers; never let a visitor's own pass through either.
+	reverse_proxy rpc:9944 {
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up -X-Forwarded-For
+	}
 }
 
 explorer.{$DOMAIN} {
 	import headers
 	# NFT images live on other hosts (IPFS gateways…) and are only loaded on request.
-	import csp https:
+	import csp "data: https:"
 	import hidden
 	handle /api/* {
 		reverse_proxy scan:8090
@@ -79,7 +85,7 @@ apps.{$DOMAIN} {
 
 faucet.{$DOMAIN} {
 	import headers
-	import csp
+	import csp data:
 	import hidden
 	reverse_proxy faucet:8080
 }

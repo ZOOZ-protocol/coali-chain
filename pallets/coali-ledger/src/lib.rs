@@ -35,6 +35,7 @@ mod tests;
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 
+pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -300,13 +301,15 @@ pub mod pallet {
 		pub merkle_version: u8,
 	}
 
+	/// 1: the storage layout of runtime 204 (see `migrations`).
+	pub(crate) const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
 	#[pallet::pallet]
+	#[pallet::storage_version(STORAGE_VERSION)]
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		#[allow(deprecated)]
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// Origin allowed to add and remove attesters.
 		type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 		/// Signature scheme of voter and truster keys.

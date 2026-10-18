@@ -75,8 +75,6 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		#[allow(deprecated)]
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// Sets the trust threshold and selection limits, manages founders and identity attesters.
 		type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 		/// Trust recorded on chain between addresses.

@@ -36,6 +36,7 @@ const balance = async (id, who) => {
 };
 
 check("runtime 205", api.runtimeVersion.specVersion.toNumber() === 205);
+check("ledger storage version 1", (await api.query.coaliLedger.palletVersion()).toNumber() === 1);
 
 const id = (await api.query.assets.nextAssetId()).unwrap().toNumber();
 check(
@@ -43,6 +44,13 @@ check(
   !(await submit(alice, api.tx.utility.batchAll([
     api.tx.assets.create(id, alice.address, 1),
     api.tx.assets.setMetadata(id, "Tether USD", "USDT", 6),
+  ]))),
+);
+check(
+  "look-alike name refused (Greek omicrons)",
+  !(await submit(alice, api.tx.utility.batchAll([
+    api.tx.assets.create(id, alice.address, 1),
+    api.tx.assets.setMetadata(id, "ZΟΟZ", "CLB", 0),
   ]))),
 );
 check(

@@ -6,7 +6,7 @@ use coali_runtime::{
 };
 use frame_support::{
 	assert_noop, assert_ok,
-	traits::{fungibles::Inspect, Currency, ReservableCurrency as _},
+	traits::{fungibles::Inspect, Currency},
 };
 use sp_keyring::Sr25519Keyring;
 use sp_runtime::{traits::Dispatchable, DispatchError, MultiAddress};

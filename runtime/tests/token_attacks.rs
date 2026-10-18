@@ -70,6 +70,27 @@ fn t01_reserved_names_are_refused() {
 		assert!(!named(b"Wrapped", b"WZOOZ"));
 		assert!(!named(b"Bitcoin cash", b"BCH"));
 		assert!(named(b"Maison Tel Aviv", b"MTA"));
+		// Look-alike letters from other alphabets, full width, invisible characters (double check
+		// TOK-05), and symbols outside Latin letters and digits.
+		for (name, symbol) in [
+			("ZΟΟZ", "CLB"),
+			("Club", "ZООZ"),
+			("Tether", "USDТ"),
+			("ＺＯＯＺ", "CLB"),
+			("ZO\u{200B}OZ", "CLB"),
+			("Club\u{202E}", "CLB"),
+			("𝐙𝐎𝐎𝐙 fan", "CLB"),
+			("Zööz", "CLB"),
+			("Club", "CL B"),
+			("Club", "CLÉ"),
+			("Club", ""),
+		] {
+			assert!(!named(name.as_bytes(), symbol.as_bytes()), "{name} / {symbol} should be refused");
+		}
+		// Real names in other alphabets stay possible.
+		for (name, symbol) in [("Club des élèves", "ELV"), ("מועדון תל אביב", "TLV"), ("Club 🎉", "PARTY"), ("Ζωή", "ZOE")] {
+			assert!(named(name.as_bytes(), symbol.as_bytes()), "{name} / {symbol} should be allowed");
+		}
 		// The foundation can still name its own tokens, through root.
 		assert!(Assets::force_set_metadata(RuntimeOrigin::root(), id.into(), b"ZOOZ".to_vec(), b"ZOOZ".to_vec(), 0, false).is_ok());
 	});
@@ -224,6 +245,35 @@ fn t07_lock_survives_team_and_owner_changes_and_renounces_everything() {
 		assert!(!asset("mallory", A::set_metadata { id: id.into(), name: b"X".to_vec(), symbol: b"X".to_vec(), decimals: 0 }));
 		assert!(!rules("mallory", W::set_restricted { asset: id, restricted: true }));
 		assert_eq!(Assets::total_issuance(id), 1_000);
+	});
+}
+
+/// Double check TOK-06: locking a regulated token fixes its supply, name and existence, but its
+/// creator keeps the regulated powers (freeze, seize, allowlist) — what the sites now say. To
+/// renounce those too, the creator lifts the restriction first.
+#[test]
+fn t07b_locked_regulated_token_keeps_regulated_powers_until_unrestricted() {
+	ext().execute_with(|| {
+		let id = next_id();
+		assert!(asset("alice", A::create { id: id.into(), admin: who("alice").into(), min_balance: 1 }));
+		assert!(rules("alice", W::allow { asset: id, accounts: vec![who("alice"), who("bob")] }));
+		assert!(rules("alice", W::set_restricted { asset: id, restricted: true }));
+		assert!(asset("alice", A::mint { id: id.into(), beneficiary: who("alice").into(), amount: 1_000 }));
+		assert!(accept("bob", id));
+		assert!(give("alice", id, "bob", 500));
+		assert!(rules("alice", W::fix_supply { asset: id }));
+		assert!(asset("alice", A::freeze { id: id.into(), who: who("bob").into() }));
+		assert!(asset("alice", A::thaw { id: id.into(), who: who("bob").into() }));
+
+		// Lifting the restriction removes the regulated powers for good: it cannot come back.
+		assert!(rules("alice", W::set_restricted { asset: id, restricted: false }));
+		assert!(!rules("alice", W::set_restricted { asset: id, restricted: true }));
+		assert!(!asset("alice", A::freeze { id: id.into(), who: who("bob").into() }));
+		assert!(!asset(
+			"alice",
+			A::force_transfer { id: id.into(), source: who("bob").into(), dest: who("alice").into(), amount: 1 }
+		));
+		assert!(!asset("alice", A::burn { id: id.into(), who: who("bob").into(), amount: 1 }));
 	});
 }
 

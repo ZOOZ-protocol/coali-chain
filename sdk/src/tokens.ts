@@ -439,10 +439,12 @@ export async function burn(api: ApiPromise, sender: Sender, id: number, amount: 
  * holders: a token whose creator renounced (`locked`) can no longer change.
  */
 export interface CreatorPowers {
-  /** The creator renounced: nothing below is possible anymore, for good. */
+  /** The creator renounced: nothing below is possible anymore, for good (a locked, unregulated token). */
+  renounced: boolean;
+  /** Supply, name and existence locked for good (a regulated token keeps `freeze`). */
   locked: boolean;
   mint: boolean;
-  /** Freeze holders or seize their tokens: regulated (restricted) tokens only. */
+  /** Freeze holders or seize their tokens: regulated (restricted) tokens only, even when locked. */
   freeze: boolean;
   /** Only while nobody but the creator holds it. */
   destroy: boolean;
@@ -456,6 +458,7 @@ export async function creatorPowers(api: ApiPromise, info: TokenInfo): Promise<C
   const heldByOthers = info.holders > (ownerHolds ? 1 : 0);
   const locked = info.fixedSupply;
   return {
+    renounced: locked && !info.restricted,
     locked,
     mint: !locked,
     freeze: info.restricted,
@@ -465,17 +468,80 @@ export async function creatorPowers(api: ApiPromise, info: TokenInfo): Promise<C
   };
 }
 
-/** Locks a token for good: the creator renounces minting, destroying, renaming and restricting it. */
+/**
+ * Locks a token for good: the creator renounces minting, destroying, renaming and restricting it.
+ * A regulated (restricted) token keeps its regulated powers (freeze, seize, allowlist) until its
+ * creator lifts the restriction, which cannot be turned back on.
+ */
 export const renounce = (api: ApiPromise, sender: Sender, id: number) => fixSupply(api, sender, id);
 
 const RESERVED_SYMBOLS = ["ZOOZ", "COALI", "USDT", "USDC", "BUSD", "DAI", "BTC", "WBTC", "ETH", "WETH", "BNB", "DOT", "KSM", "SOL", "XRP", "TRUVOT"];
 const RESERVED_WORDS = ["ZOOZ", "COALI", "TETHER", "USDCOIN", "BITCOIN", "ETHEREUM", "POLKADOT", "BINANCE", "TRUVOT", "POPOLITICA"];
-const normalized = (s: string) =>
-  s.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/0/g, "O").replace(/1/g, "I");
 
-/** Same rule as the chain: names and symbols that would pass for ZOOZ, stablecoins or major coins. */
+const inRanges = (cp: number, ranges: [number, number][]) => ranges.some(([a, b]) => cp >= a && cp <= b);
+const INVISIBLE: [number, number][] = [
+  [0x00, 0x1f], [0x7f, 0x9f], [0xad, 0xad], [0x34f, 0x34f], [0x61c, 0x61c], [0x115f, 0x1160], [0x17b4, 0x17b5],
+  [0x180b, 0x180f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x206f], [0x3164, 0x3164], [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff], [0xffa0, 0xffa0], [0xe0000, 0xe0fff],
+];
+const LOOKALIKES: Record<string, [number, number][]> = {
+  A: [[0xc0, 0xc5], [0xe0, 0xe5], [0x100, 0x105], [0x391, 0x391], [0x3b1, 0x3b1], [0x410, 0x410], [0x430, 0x430]],
+  B: [[0x392, 0x392], [0x412, 0x412], [0x432, 0x432]],
+  C: [[0xc7, 0xc7], [0xe7, 0xe7], [0x106, 0x10d], [0x421, 0x421], [0x441, 0x441], [0x3f2, 0x3f2], [0x3f9, 0x3f9]],
+  D: [[0x10e, 0x111], [0x501, 0x501]],
+  E: [[0xc8, 0xcb], [0xe8, 0xeb], [0x112, 0x11b], [0x395, 0x395], [0x3b5, 0x3b5], [0x415, 0x415], [0x435, 0x435], [0x401, 0x401], [0x451, 0x451]],
+  H: [[0x397, 0x397], [0x41d, 0x41d], [0x43d, 0x43d]],
+  I: [[0xcc, 0xcf], [0xec, 0xef], [0x128, 0x131], [0x399, 0x399], [0x3b9, 0x3b9], [0x406, 0x406], [0x456, 0x456], [0x4c0, 0x4c0]],
+  J: [[0x408, 0x408], [0x458, 0x458]],
+  K: [[0x39a, 0x39a], [0x3ba, 0x3ba], [0x41a, 0x41a], [0x43a, 0x43a]],
+  M: [[0x39c, 0x39c], [0x41c, 0x41c], [0x43c, 0x43c]],
+  N: [[0xd1, 0xd1], [0xf1, 0xf1], [0x143, 0x148], [0x39d, 0x39d]],
+  O: [[0xd2, 0xd6], [0xd8, 0xd8], [0xf2, 0xf6], [0xf8, 0xf8], [0x14c, 0x151], [0x39f, 0x39f], [0x3bf, 0x3bf], [0x41e, 0x41e], [0x43e, 0x43e], [0x3a9, 0x3a9]],
+  P: [[0x3a1, 0x3a1], [0x3c1, 0x3c1], [0x420, 0x420], [0x440, 0x440]],
+  Q: [[0x51a, 0x51b]],
+  S: [[0x15a, 0x161], [0x405, 0x405], [0x455, 0x455]],
+  T: [[0x3a4, 0x3a4], [0x3c4, 0x3c4], [0x422, 0x422], [0x442, 0x442]],
+  U: [[0xd9, 0xdc], [0xf9, 0xfc], [0x168, 0x173], [0x3c5, 0x3c5]],
+  V: [[0x3bd, 0x3bd], [0x474, 0x475]],
+  W: [[0x51c, 0x51d]],
+  X: [[0x3a7, 0x3a7], [0x3c7, 0x3c7], [0x425, 0x425], [0x445, 0x445]],
+  Y: [[0xdd, 0xdd], [0xfd, 0xfd], [0xff, 0xff], [0x176, 0x178], [0x3a5, 0x3a5], [0x423, 0x423], [0x443, 0x443], [0x4ae, 0x4af]],
+  Z: [[0x179, 0x17e], [0x396, 0x396]],
+};
+
+/** The Latin capital or digit a character passes for (same table as the runtime), or null. */
+function latinLookalike(cp: number): string | null {
+  if ((cp >= 0x30 && cp <= 0x39) || (cp >= 0x41 && cp <= 0x5a) || (cp >= 0x61 && cp <= 0x7a)) return String.fromCharCode(cp).toUpperCase();
+  if (cp >= 0xff10 && cp <= 0xff19) return String.fromCharCode(0x30 + cp - 0xff10);
+  if (cp >= 0xff21 && cp <= 0xff3a) return String.fromCharCode(0x41 + cp - 0xff21);
+  if (cp >= 0xff41 && cp <= 0xff5a) return String.fromCharCode(0x41 + cp - 0xff41);
+  if (cp >= 0x1d400 && cp <= 0x1d6a3) return String.fromCharCode(0x41 + (((cp - 0x1d400) % 52) % 26));
+  if (cp >= 0x1d7ce && cp <= 0x1d7ff) return String.fromCharCode(0x30 + ((cp - 0x1d7ce) % 10));
+  for (const [letter, ranges] of Object.entries(LOOKALIKES)) if (inRanges(cp, ranges)) return letter;
+  return null;
+}
+
+/** Look-alike skeleton in Latin capitals (0 read as O, 1 as I), or null with invisible characters. */
+function skeleton(text: string): string | null {
+  let out = "";
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (inRanges(cp, INVISIBLE)) return null;
+    const l = latinLookalike(cp);
+    if (l) out += l === "0" ? "O" : l === "1" ? "I" : l;
+  }
+  return out;
+}
+
+/**
+ * Same rule as the chain (runtime 205): the symbol must be 1 to 12 Latin letters or digits, the
+ * name must have no invisible character, and neither may pass for ZOOZ, a stablecoin or a major
+ * coin — including with look-alike letters from other alphabets. True when refused.
+ */
 export function isReservedName(name: string, symbol: string): boolean {
-  const [n, s] = [normalized(name), normalized(symbol)];
+  if (!/^[A-Za-z0-9]{1,12}$/.test(symbol)) return true;
+  const [n, s] = [skeleton(name), skeleton(symbol)];
+  if (n === null || s === null) return true;
   return RESERVED_SYMBOLS.includes(s) || RESERVED_WORDS.some((w) => n.includes(w) || s.includes(w));
 }
 

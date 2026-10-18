@@ -223,7 +223,7 @@ function eventLabel(e, me) {
     case "tokenAllowlist.RestrictionSet":
       return d.restricted ? `🔒 ${tokLink(d.asset)} : ${t("only allowlisted accounts can receive it", "seuls les comptes de la liste blanche peuvent le recevoir")}` : `🔓 ${tokLink(d.asset)} : ${t("anyone can receive it again", "tout le monde peut de nouveau le recevoir")}`;
     case "tokenAllowlist.SupplyFixed":
-      return `🔐 ${tokLink(d.asset)} ${t("locked forever: its creator renounced (no more minting, destroying, renaming or restricting)", "verrouillé pour toujours : son créateur a renoncé (plus de création, destruction, renommage ni restriction)")}`;
+      return `🔐 ${tokLink(d.asset)} ${t("locked forever: no more minting, destroying, renaming or restricting", "verrouillé pour toujours : plus de création, destruction, renommage ni restriction")}`;
     case "assets.Touched":
       return `🤝 ${addr(d.who)} ${t("accepted the token", "a accepté le token")} ${tokLink(d.assetId)}`;
     case "assets.ApprovedTransfer":
@@ -693,7 +693,8 @@ function creatorPowers(x) {
     [t("Restrict who can receive it", "Restreindre qui peut le recevoir"), !locked && BigInt(x.supply || 0) === 0n],
   ];
   return `<div class="card"><div class="card-h">${t("What its creator can still do", "Ce que son créateur peut encore faire")}</div><div class="mini">
-    ${locked ? `<div class="sm">🔒 ${t("Its creator renounced: this token can no longer change.", "Son créateur a renoncé : ce token ne peut plus changer.")}</div>` : ""}
+    ${locked && !x.restricted ? `<div class="sm">🔒 ${t("Its creator renounced: this token can no longer change.", "Son créateur a renoncé : ce token ne peut plus changer.")}</div>` : ""}
+    ${locked && x.restricted ? `<div class="sm">🔒 ${t("Quantity, name and existence locked for good. Regulated token: its creator can still freeze holders, take tokens back and manage the approved list.", "Quantité, nom et existence verrouillés pour toujours. Token réglementé : son créateur peut encore geler des détenteurs, reprendre des tokens et gérer la liste des personnes approuvées.")}</div>` : ""}
     ${rows.map(([label, can]) => `<div><div class="k">${label}</div><div>${can ? `<span class="tag warn">${t("Yes", "Oui")}</span>` : `<span class="tag ok">${t("No", "Non")}</span>`}</div></div>`).join("")}
   </div></div>`;
 }

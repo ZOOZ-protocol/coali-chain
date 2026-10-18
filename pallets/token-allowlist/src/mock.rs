@@ -35,7 +35,6 @@ parameter_types! {
 }
 
 impl pallet_token_allowlist::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
 	type AssetId = u32;
 	type Managers = Managers;
 	type MaxAccountsPerCall = MaxAccountsPerCall;

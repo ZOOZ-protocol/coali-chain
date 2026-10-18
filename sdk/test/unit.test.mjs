@@ -3,6 +3,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blake2AsU8a } from "@polkadot/util-crypto";
 import { stringToU8a, u8aConcat, u8aToHex } from "@polkadot/util";
+import { isReservedName } from "../dist/tokens.js";
+
+test("token names: reserved names and look-alikes refused like on chain, real names allowed", () => {
+  for (const [name, symbol] of [
+    ["ZOOZ", "ZOOZ"], ["Tether USD", "USDT"], ["My coin", "z00z"], ["Official Co-ali reward", "RWD"],
+    ["ZΟΟZ", "CLB"], ["Club", "ZООZ"], ["Tether", "USDТ"], ["ＺＯＯＺ", "CLB"], ["ZO\u200BOZ", "CLB"],
+    ["Club\u202E", "CLB"], ["𝐙𝐎𝐎𝐙 fan", "CLB"], ["Zööz", "CLB"], ["Club", "CL B"], ["Club", "CLÉ"], ["Club", ""],
+  ]) assert.equal(isReservedName(name, symbol), true, `${name} / ${symbol}`);
+  for (const [name, symbol] of [["Maison Tel Aviv", "MTA"], ["Club des élèves", "ELV"], ["מועדון תל אביב", "TLV"], ["Club 🎉", "PARTY"], ["Ζωή", "ZOE"]])
+    assert.equal(isReservedName(name, symbol), false, `${name} / ${symbol}`);
+});
 import {
   canonicalJson,
   contentHash,

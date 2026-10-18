@@ -120,7 +120,7 @@ test("receiver without ZOOZ can be offered a token but needs ZOOZ to accept it",
 test("holders can leave a token; the creator's powers shrink as others hold it", async () => {
   const r = await createToken(api, alice, { name: "Fan club", symbol: "FAN", supply: 10 });
   let p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
-  assert.deepEqual(p, { locked: false, mint: true, freeze: false, destroy: true, rename: true, restrict: false });
+  assert.deepEqual(p, { renounced: false, locked: false, mint: true, freeze: false, destroy: true, rename: true, restrict: false });
   await acceptToken(api, bob, r.tokenId);
   await transfer(api, alice, r.tokenId, bob.address, 3);
   p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
@@ -130,7 +130,7 @@ test("holders can leave a token; the creator's powers shrink as others hold it",
   assert.equal(await tokenBalance(api, r.tokenId, bob.address), 0n);
   await renounce(api, alice, r.tokenId);
   p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
-  assert.deepEqual(p, { locked: true, mint: false, freeze: false, destroy: false, rename: false, restrict: false });
+  assert.deepEqual(p, { renounced: true, locked: true, mint: false, freeze: false, destroy: false, rename: false, restrict: false });
 });
 
 test("reserved names are refused before signing", async () => {

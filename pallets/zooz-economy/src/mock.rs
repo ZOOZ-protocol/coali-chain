@@ -85,7 +85,6 @@ parameter_types! {
 }
 
 impl pallet_zooz_economy::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type AdminOrigin = EnsureRoot<u64>;
 	type BlockAuthor = Author;

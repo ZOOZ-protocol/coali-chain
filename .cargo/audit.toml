@@ -1,0 +1,21 @@
+# cargo audit exceptions, reviewed 2026-10-18. Everything fixable within the Polkadot SDK release
+# (polkadot-stable2606-3) was updated (wasmtime 36.0.18, rustls 0.23.46, rustls-webpki 0.103.15,
+# quinn-proto 0.11.19, h2 0.4.20, crossbeam-epoch 0.9.21, hickory-proto 0.24.4). What remains needs
+# a newer Polkadot SDK release; revisit at each SDK upgrade.
+[advisories]
+ignore = [
+  # tracing-subscriber 0.3.19, pinned (=0.3.19) by the Polkadot SDK: ANSI escapes in node logs.
+  # Node operators' terminals only; no effect on consensus or state.
+  "RUSTSEC-2025-0055",
+  # hickory-proto 0.24 (libp2p-dns 0.42, through sc-network): CPU cost of encoding DNS messages.
+  # Node networking only; fixed in hickory-proto 0.26, which needs a newer libp2p / Polkadot SDK.
+  "RUSTSEC-2026-0119",
+  # The following versions are in Cargo.lock but not built into the node or the runtime:
+  # `cargo tree --target all --all-features -i <crate>@<version>` finds no path to them.
+  "RUSTSEC-2026-0258", # h2 0.3.26 (the node uses h2 0.4.20)
+  "RUSTSEC-2025-0009", # ring 0.16.20 (the node uses ring 0.17)
+  "RUSTSEC-2026-0104", # rustls-webpki 0.101.4 (the node uses 0.103.15)
+  "RUSTSEC-2026-0098", # rustls-webpki 0.101.4
+  "RUSTSEC-2026-0099", # rustls-webpki 0.101.4
+  "RUSTSEC-2026-0344", # ruzstd 0.8.1
+]

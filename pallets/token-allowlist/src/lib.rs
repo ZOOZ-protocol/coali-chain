@@ -39,8 +39,6 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		#[allow(deprecated)]
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		type AssetId: Member + Parameter + MaxEncodedLen + Copy;
 		type Managers: TokenManagers<Self::AssetId, Self::AccountId>;
 		/// Accounts added or removed in one call.
