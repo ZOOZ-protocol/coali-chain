@@ -52,8 +52,10 @@ jobs:
       - name: System dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y protobuf-compiler clang libclang-dev
-          # RocksDB's bindings look for libclang; tell them where apt put it.
+          # RocksDB's bindings look for libclang and litep2p for protoc: tell them where apt put them.
           echo "LIBCLANG_PATH=$(dirname "$(find /usr/lib -name 'libclang*.so*' | head -1)")" >> "$GITHUB_ENV"
+          protoc --version
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rust-src
