@@ -237,3 +237,28 @@ clippy `-D warnings` propre.
 
 DNS `zooz.network` : la zone est chez Cloudflare, et la clé API du dépôt n'y a pas accès ; les
 enregistrements DMARC et CAA sont à ajouter par le propriétaire du compte.
+
+## Revue finale (19/10, 1 h) — état en production
+
+| Point | Résultat |
+|---|---|
+| Runtime en ligne | ✅ `specVersion 205` ; le code on-chain (blake2-256 `0x9b045e529b44cee00cc5edf0321d44db8a5034a6242a2ed1773be7bf8842035f`) est exactement `target/release-205-srtool/coali_runtime.compact.compressed.wasm` (build reproductible srtool) |
+| Analyseur JSON des résultats (code on-chain) | ✅ Fuzzing de 300 000 entrées malformées (`security/simulations/fuzz_tally.rs`) : aucun panic, les 13 444 entrées acceptées sont toutes canoniques |
+| Clippy | ✅ Pallets et runtime sans avertissement ; 16 erreurs de style (`result_large_err`) dans le nœud, code du modèle Polkadot, non analysé par la CI |
+| Poids des transactions | ✅ `coali-ledger` : poids générés par benchmark |
+| Migration `coali-ledger` v0 → v1 | ✅ Ajouts seulement, rien à traduire |
+| DNS `zooz.network` | ✅ DMARC `p=quarantine` ; CAA présents |
+
+### À faire
+1. **ZOOZ-12 — Moyenne — encore exploitable** : la vue `my_chain_outbox` masque le sel jusqu'à la
+   clôture, mais la table `chain_outbox` reste lisible directement par son propriétaire (politique
+   « Own chain outbox », `GRANT SELECT` d'origine). Une requête REST directe donne le sel avant la
+   fin du vote, donc un reçu vendable. Dès que l'app lit `my_chain_outbox` :
+   `DROP POLICY "Own chain outbox" ON public.chain_outbox; REVOKE SELECT ON public.chain_outbox FROM authenticated;`
+2. **CI rouge** : les 5 dernières exécutions échouent sur « Node builds » (`cargo check`, libclang) ;
+   tout le reste passe. À rendre verte avant de contacter un auditeur (c'est la première chose visible).
+3. **Publier le hash srtool** `0x9b04…035f` (notes de version, README) avec la commande pour le
+   reproduire.
+4. **Déployer le nouveau `zooz.network`** : en ligne, le site n'a encore que HSTS (pas de CSP ni
+   X-Frame-Options) et pas le parcours d'acceptation des tokens.
+5. Résiduel bas TOK-05 (6 noms) inchangé.
