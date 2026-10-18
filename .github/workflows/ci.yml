@@ -57,6 +57,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check
         shell: bash
+        env:
+          CARGO_TERM_COLOR: never
         run: |
           set -o pipefail
           cargo check --locked -p coali-node 2>&1 | tee build.log
