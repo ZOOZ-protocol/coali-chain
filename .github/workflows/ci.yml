@@ -39,17 +39,32 @@ jobs:
           -p pallet-token-allowlist -p coali-runtime --tests
       - name: Benchmarks compile and pass their tests
         run: cargo test --locked -p pallet-coali-ledger --features runtime-benchmarks
-      - name: Node builds
-        run: cargo check --locked -p coali-node
+
+  node:
+    name: Node builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # The node pulls the whole Polkadot SDK client: make room on the runner's disk first.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked -p coali-node
 
   dependencies:
     name: Rust dependencies (cargo audit, cargo deny)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit (exceptions and reasons in .cargo/audit.toml)
+        run: cargo install cargo-audit --locked && cargo audit
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check bans sources
