@@ -82,6 +82,8 @@ jobs:
     name: Reproducible runtime (srtool)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Build with srtool
@@ -94,10 +96,20 @@ jobs:
       - name: Hashes
         run: |
           echo '${{ steps.srtool.outputs.json }}' | jq . > srtool.json
-          jq '{version: .runtimes.compressed.subwasm.core_version, blake2_256: .runtimes.compressed.blake2_256, proposal_hash: .runtimes.compressed.subwasm.proposal_hash}' srtool.json
+          jq '{version: .runtimes.compressed.subwasm.core_version, blake2_256: .runtimes.compressed.blake2_256, proposal_hash: .runtimes.compressed.subwasm.proposal_hash}' srtool.json | tee hashes.json
       - uses: actions/upload-artifact@v4
         with:
           name: coali-runtime-wasm
           path: |
+            ${{ steps.srtool.outputs.wasm_compressed }}
+            srtool.json
+      # On a tag, the wasm and its hashes become a public release: what is deployed is this file.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          body_path: hashes.json
+          files: |
             ${{ steps.srtool.outputs.wasm_compressed }}
             srtool.json
