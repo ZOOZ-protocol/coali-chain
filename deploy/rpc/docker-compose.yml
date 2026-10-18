@@ -1,8 +1,8 @@
 # Public access server: archive RPC node, Coaliscan explorer (scan + static site), Polkadot.js Apps, faucet, Caddy (TLS),
-# the finality watchdog / price oracle, and optionally the relayer (docker compose --profile relayer up -d).
+# the finality watchdog / price oracle. The relayer runs on a validator server (deploy/relayer).
 # Expects: .env (DOMAIN, ACME_EMAIL, IMAGE), spec/coali-testnet-raw.json, faucet.env (FAUCET_URI),
-# watchdog.env (WATCHDOG_URI: proxy key limited to forced finality changes; ORACLE_URI: oracle account)
-# and relayer.env for the relayer profile. No sudo key on this server (security/AUDIT-PRE-2026-10.md, ZOOZ-08).
+# watchdog.env (WATCHDOG_URI: proxy key limited to forced finality changes; ORACLE_URI: oracle account).
+# No sudo key on this server (security/AUDIT-PRE-2026-10.md, ZOOZ-08).
 services:
   rpc:
     image: ${IMAGE:-coali-node:testnet}
@@ -85,16 +85,6 @@ services:
       CHAIN_WS: ws://rpc:9944
     volumes:
       - watchdog-data:/data
-    depends_on: [rpc]
-
-  relayer:
-    profiles: ["relayer"]
-    build: ../../relayer
-    container_name: coali-relayer
-    restart: unless-stopped
-    env_file: relayer.env
-    environment:
-      CHAIN_WS: ws://rpc:9944
     depends_on: [rpc]
 
 volumes:

@@ -17,7 +17,7 @@ Résultat : **13 attaques bloquées**, **13 failles confirmées** (dont 3 critiq
 ## Corrections — runtime 204 (octobre 2026)
 
 Statut au moment de l'écriture : corrigé et testé localement (répétition complète 203 → 204 avec
-les deux relayeurs) ; **mise en ligne du testnet en cours** (voir « Déploiement » plus bas).
+les deux relayeurs) ; **testnet mis à jour le 18/10/2026** (voir « Déploiement » plus bas).
 Tests : `SKIP_WASM_BUILD=1 cargo test -p coali-runtime --test security_simulations` (modules
 `blocked`, `bypass`, `temporary`), tests des pallets, `node security/simulations/*.mjs`,
 `node scripts/e2e/rehearse-204.mjs`.
@@ -47,6 +47,16 @@ Tests : `SKIP_WASM_BUILD=1 cargo test -p coali-runtime --test security_simulatio
 (aucun vote ni clôture avant `set_rules`, mêmes contraintes) ; B02 électorat énorme / pas de fin ;
 B03 totaux redistribués (recomptage) ; B04 votes et hausse du plafond après la fin ; B05–B07 déjà
 bloqués. Tests : module `bypass`.
+
+**Déploiement (18/10/2026).** Runtime 204 en ligne (bloc #57046 → #57050, migration vérifiée).
+Oracle, proxy du watchdog (`FinalityWatchdog`) et attesteur d'identité séparé
+(`5CiTDH…`) nommés ; la clé du relayeur n'est plus attesteur d'identité. Relayeur déplacé sur un
+validateur (RPC du nœud non exposé), avec `IDENTITY_ATTESTER_URI` distincte ; électorat publié
+(6) et règles posées sur les 66 décisions d'avant 204. Serveur RPC : plus de relayeur ni de
+`relayer.env`, watchdog avec `WATCHDOG_URI` / `ORACLE_URI` seulement. La clé sudo n'est présente
+sur aucun des 4 serveurs (vérifié par recherche du secret). Migration Supabase
+`20261018020000_chain_security_fixes` appliquée. Reste temporaire : sudo (gardé hors ligne),
+MinTrust = 1, votes des créateurs et politiques sans KYC le temps du lancement.
 
 ## Le constat principal
 
