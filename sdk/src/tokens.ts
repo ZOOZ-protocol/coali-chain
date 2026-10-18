@@ -36,7 +36,9 @@ export class ChainError extends Error {
 }
 
 const FRIENDLY: Record<string, string> = {
-  "system.CallFiltered": "Not allowed: the receiver is not on this token's allowlist, or its supply is locked.",
+  "system.CallFiltered":
+    "Not allowed by the token rules: the receiver has not accepted this token or is not on its allowlist, the token is locked, or others already hold it.",
+  "tokens.ReservedName": "This name or symbol is reserved (it could pass for ZOOZ, a stablecoin or a major coin).",
   "assets.BadAssetId": "Someone created a token at the same moment. Please try again.",
   "assets.BalanceLow": "Not enough tokens.",
   "assets.NoPermission": "Only the token's creator can do this.",
@@ -243,7 +245,7 @@ export interface Balances {
   nfts: { collection: number; item: number }[];
 }
 
-/** Everything `address` holds: ZOOZ, tokens (non-zero or created by it) and NFTs. */
+/** Everything `address` holds: ZOOZ, tokens (accepted, even empty, or created by it) and NFTs. */
 export async function balances(api: ApiPromise, address: string): Promise<Balances> {
   const [acct, list, nftKeys] = await Promise.all([
     api.query.system.account(address) as any,
@@ -256,7 +258,7 @@ export async function balances(api: ApiPromise, address: string): Promise<Balanc
     zooz: { free: acct.data.free.toBigInt(), reserved: acct.data.reserved.toBigInt() },
     tokens: list
       .map((t, i) => ({ id: t.id, name: t.name, symbol: t.symbol, decimals: t.decimals, balance: bals[i].isSome ? bals[i].unwrap().balance.toBigInt() : 0n, creator: t.owner === owner }))
-      .filter((t) => t.balance > 0n || t.creator),
+      .filter((t, i) => bals[i].isSome || t.creator),
     nfts: nftKeys.map((k: any) => ({ collection: k.args[1].toNumber(), item: k.args[2].toNumber() })),
   };
 }
@@ -301,12 +303,14 @@ async function tokenCalls(api: ApiPromise, owner: string, opts: CreateTokenOptio
   const supply = toUnits(opts.supply, decimals);
   const A = api.tx.assets;
   const W = api.tx.tokenAllowlist;
+  if (isReservedName(opts.name, opts.symbol)) throw new ChainError("tokens.ReservedName", "this name or symbol is reserved");
   const calls = [A.create(id, owner, 1), A.setMetadata(id, opts.name.trim(), opts.symbol.trim(), decimals)];
-  if (supply > 0n) calls.push(A.mint(id, owner, supply));
+  // A regulated token is restricted before any unit exists (runtime 205).
   if (opts.allowlist) {
     const extra = Array.isArray(opts.allowlist) ? opts.allowlist : [];
     calls.push(W.allow(id, [owner, ...extra]), W.setRestricted(id, true));
   }
+  if (supply > 0n) calls.push(A.mint(id, owner, supply));
   if (opts.fixedSupply) calls.push(W.fixSupply(id));
   return calls;
 }
@@ -349,14 +353,130 @@ export async function mint(api: ApiPromise, sender: Sender, id: number, to: stri
   return submit(api, sender, api.tx.assets.mint(id, to, await decimalsOf(api, id, amount)));
 }
 
-/** Sends tokens. The receiver needs a little ZOOZ, and must be allowlisted if the token is restricted. */
-export async function transfer(api: ApiPromise, sender: Sender, id: number, to: string, amount: Amount): Promise<TxResult> {
-  return submit(api, sender, api.tx.assets.transferKeepAlive(id, to, await decimalsOf(api, id, amount)));
+/**
+ * Whether `address` can receive `id` directly: it accepted the token (it has an account for it,
+ * possibly empty) or it is the token's owner. Since runtime 205 a token only arrives in such
+ * accounts, so nobody can fill a wallet with junk tokens.
+ */
+export async function hasAccepted(api: ApiPromise, id: number, address: string): Promise<boolean> {
+  const [a, d] = (await Promise.all([api.query.assets.account(id, address), api.query.assets.asset(id)])) as any[];
+  if (a.isSome) return true;
+  return d.isSome && d.unwrap().owner.toString() === api.createType("AccountId", address).toString();
 }
 
-/** Destroys tokens held by the sender. */
+/**
+ * Sends tokens. If the receiver has not accepted this token yet, the amount is offered instead
+ * (`offered: true`): the receiver sees the offer and collects it with `acceptToken`. The receiver
+ * needs a little ZOOZ, and must be allowlisted if the token is restricted.
+ */
+export async function transfer(
+  api: ApiPromise,
+  sender: Sender,
+  id: number,
+  to: string,
+  amount: Amount,
+): Promise<TxResult & { offered: boolean }> {
+  const raw = await decimalsOf(api, id, amount);
+  const [restricted, allowed] = (await Promise.all([
+    api.query.tokenAllowlist.restricted(id),
+    api.query.tokenAllowlist.allowed(id, to),
+  ])) as any[];
+  if (restricted.isSome && !allowed.isSome) throw new ChainError("system.CallFiltered", FRIENDLY["system.CallFiltered"]);
+  if (await hasAccepted(api, id, to)) {
+    return { ...(await submit(api, sender, api.tx.assets.transferKeepAlive(id, to, raw))), offered: false };
+  }
+  return { ...(await submit(api, sender, api.tx.assets.approveTransfer(id, to, raw))), offered: true };
+}
+
+export interface Offer {
+  token: number;
+  /** Who offers (the tokens leave this account when collected). */
+  from: string;
+  /** Raw units. */
+  amount: bigint;
+}
+
+/** Tokens offered to `address` and not collected yet (approvals where it is the delegate). */
+export async function pendingOffers(api: ApiPromise, address: string): Promise<Offer[]> {
+  const me = api.createType("AccountId", address).toString();
+  const entries = (await api.query.assets.approvals.entries()) as any[];
+  return entries
+    .filter(([k]) => k.args[2].toString() === me)
+    .map(([k, v]) => ({ token: k.args[0].toNumber(), from: k.args[1].toString(), amount: v.unwrap().amount.toBigInt() }))
+    .filter((o) => o.amount > 0n);
+}
+
+/**
+ * Accepts a token in one signature: opens the sender's account for it (a small ZOOZ deposit,
+ * returned with `leaveToken`) and collects the given offers of that token.
+ */
+export async function acceptToken(api: ApiPromise, sender: Sender, id: number, offers: Offer[] = []): Promise<TxResult> {
+  const A = api.tx.assets;
+  const calls: SubmittableExtrinsic<"promise">[] = [];
+  if (!((await api.query.assets.account(id, sender.address)) as any).isSome) calls.push(A.touch(id));
+  for (const o of offers.filter((o) => o.token === id)) calls.push(A.transferApproved(id, o.from, sender.address, o.amount));
+  if (!calls.length) throw new Error("already accepted, nothing to collect");
+  return submit(api, sender, calls.length === 1 ? calls[0] : batch(api, calls));
+}
+
+/** Withdraws an offer not collected yet (the deposit comes back). */
+export async function cancelOffer(api: ApiPromise, sender: Sender, id: number, to: string): Promise<TxResult> {
+  return submit(api, sender, api.tx.assets.cancelApproval(id, to));
+}
+
+/** Leaves a token: the sender's balance of it is destroyed and its deposit returned. */
+export async function leaveToken(api: ApiPromise, sender: Sender, id: number): Promise<TxResult> {
+  return submit(api, sender, api.tx.assets.refund(id, true));
+}
+
+/** Destroys tokens held by the sender (the token's admin; other holders use `leaveToken`). */
 export async function burn(api: ApiPromise, sender: Sender, id: number, amount: Amount): Promise<TxResult> {
   return submit(api, sender, api.tx.assets.burn(id, sender.address, await decimalsOf(api, id, amount)));
+}
+
+/**
+ * What the creator of a token can still do, as enforced by the chain (runtime 205). Show it to
+ * holders: a token whose creator renounced (`locked`) can no longer change.
+ */
+export interface CreatorPowers {
+  /** The creator renounced: nothing below is possible anymore, for good. */
+  locked: boolean;
+  mint: boolean;
+  /** Freeze holders or seize their tokens: regulated (restricted) tokens only. */
+  freeze: boolean;
+  /** Only while nobody but the creator holds it. */
+  destroy: boolean;
+  rename: boolean;
+  /** Only before any unit exists. */
+  restrict: boolean;
+}
+
+export async function creatorPowers(api: ApiPromise, info: TokenInfo): Promise<CreatorPowers> {
+  const ownerHolds = ((await api.query.assets.account(info.id, info.owner)) as any).isSome;
+  const heldByOthers = info.holders > (ownerHolds ? 1 : 0);
+  const locked = info.fixedSupply;
+  return {
+    locked,
+    mint: !locked,
+    freeze: info.restricted,
+    destroy: !locked && !heldByOthers,
+    rename: !locked && !heldByOthers,
+    restrict: !locked && info.supply === 0n,
+  };
+}
+
+/** Locks a token for good: the creator renounces minting, destroying, renaming and restricting it. */
+export const renounce = (api: ApiPromise, sender: Sender, id: number) => fixSupply(api, sender, id);
+
+const RESERVED_SYMBOLS = ["ZOOZ", "COALI", "USDT", "USDC", "BUSD", "DAI", "BTC", "WBTC", "ETH", "WETH", "BNB", "DOT", "KSM", "SOL", "XRP", "TRUVOT"];
+const RESERVED_WORDS = ["ZOOZ", "COALI", "TETHER", "USDCOIN", "BITCOIN", "ETHEREUM", "POLKADOT", "BINANCE", "TRUVOT", "POPOLITICA"];
+const normalized = (s: string) =>
+  s.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/0/g, "O").replace(/1/g, "I");
+
+/** Same rule as the chain: names and symbols that would pass for ZOOZ, stablecoins or major coins. */
+export function isReservedName(name: string, symbol: string): boolean {
+  const [n, s] = [normalized(name), normalized(symbol)];
+  return RESERVED_SYMBOLS.includes(s) || RESERVED_WORDS.some((w) => n.includes(w) || s.includes(w));
 }
 
 /** Manages a token's allowlist (creator only): add / remove accounts, turn the restriction on or off. */
@@ -375,7 +495,7 @@ export async function allowList(
   return submit(api, sender, batch(api, calls));
 }
 
-/** Locks a token's supply forever (creator only). Cannot be undone. */
+/** Locks a token forever (creator only): no more minting, destroying, renaming or restricting. Cannot be undone. */
 export async function fixSupply(api: ApiPromise, sender: Sender, id: number): Promise<TxResult> {
   return submit(api, sender, api.tx.tokenAllowlist.fixSupply(id));
 }

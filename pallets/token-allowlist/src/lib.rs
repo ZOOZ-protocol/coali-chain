@@ -4,7 +4,8 @@
 //! token's allowlist may receive it (transfers and mints to anyone else are refused). Meant for
 //! regulated tokens such as real estate shares, where holders must be verified people.
 //!
-//! A manager can also lock the supply for good: no more tokens can then be minted.
+//! A manager can also lock the token for good, renouncing its powers: the runtime then refuses
+//! to mint, destroy, rename or restrict it.
 //!
 //! The pallet only stores the rules; the runtime enforces it on the token calls (see
 //! [`Pallet::can_receive`]). Who manages a token is answered by the runtime too
@@ -129,7 +130,8 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Lock the supply of a token forever: nobody can mint it anymore. Cannot be undone.
+		/// Lock a token forever: nobody can mint, destroy, rename or restrict it anymore (enforced
+		/// by the runtime). Cannot be undone.
 		#[pallet::call_index(3)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(2, 1))]
 		pub fn fix_supply(origin: OriginFor<T>, asset: T::AssetId) -> DispatchResult {

@@ -7,7 +7,14 @@ import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { connect } from "../dist/chain.js";
 import {
   ChainError,
+  acceptToken,
   allowList,
+  cancelOffer,
+  creatorPowers,
+  isReservedName,
+  leaveToken,
+  pendingOffers,
+  renounce,
   allowedAccounts,
   balances,
   collectionInfo,
@@ -62,8 +69,14 @@ test("create a token in one signature, send it, read it", async () => {
   assert.equal(t.restricted, false);
   assert.equal(t.fixedSupply, false);
 
-  await transfer(api, alice, r.tokenId, bob.address, "0.5");
+  // Bob has not accepted the token: the amount is offered, and arrives once he accepts.
+  assert.equal((await transfer(api, alice, r.tokenId, bob.address, "0.5")).offered, true);
+  assert.equal(await tokenBalance(api, r.tokenId, bob.address), 0n);
+  const offers = await pendingOffers(api, bob.address);
+  assert.deepEqual(offers, [{ token: r.tokenId, from: alice.address, amount: 50n }]);
+  await acceptToken(api, bob, r.tokenId, offers);
   assert.equal(await tokenBalance(api, r.tokenId, bob.address), 50n);
+  assert.deepEqual(await pendingOffers(api, bob.address), []);
   await mint(api, alice, r.tokenId, bob.address, 1);
   assert.equal(await tokenBalance(api, r.tokenId, bob.address), 150n);
 
@@ -78,7 +91,8 @@ test("restricted token: only the allowlist receives", async () => {
   assert.equal(t.restricted, true);
   assert.deepEqual(new Set(await allowedAccounts(api, r.tokenId)), new Set([alice.address, bob.address]));
 
-  await transfer(api, alice, r.tokenId, bob.address, 10);
+  await acceptToken(api, bob, r.tokenId);
+  assert.equal((await transfer(api, alice, r.tokenId, bob.address, 10)).offered, false);
   await assert.rejects(transfer(api, alice, r.tokenId, dave.address, 1), (e) => e instanceof ChainError && e.code === "system.CallFiltered");
   await assert.rejects(allowList(api, bob, r.tokenId, { add: [dave.address] }), (e) => e.code === "tokenAllowlist.NotManager");
 
@@ -95,9 +109,35 @@ test("fixed supply cannot grow", async () => {
   assert.equal((await tokenInfo(api, r2.tokenId)).fixedSupply, true);
 });
 
-test("receiver without ZOOZ gets a clear error", async () => {
+test("receiver without ZOOZ can be offered a token but needs ZOOZ to accept it", async () => {
   const r = await createToken(api, alice, { name: "Gift", symbol: "GFT", supply: 5 });
-  await assert.rejects(transfer(api, alice, r.tokenId, dave.address, 1), (e) => e.code === "token.CannotCreate" && /ZOOZ/.test(e.message));
+  assert.equal((await transfer(api, alice, r.tokenId, dave.address, 1)).offered, true);
+  await assert.rejects(acceptToken(api, dave, r.tokenId, await pendingOffers(api, dave.address)));
+  await cancelOffer(api, alice, r.tokenId, dave.address);
+  assert.ok(!(await pendingOffers(api, dave.address)).some((o) => o.token === r.tokenId));
+});
+
+test("holders can leave a token; the creator's powers shrink as others hold it", async () => {
+  const r = await createToken(api, alice, { name: "Fan club", symbol: "FAN", supply: 10 });
+  let p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
+  assert.deepEqual(p, { locked: false, mint: true, freeze: false, destroy: true, rename: true, restrict: false });
+  await acceptToken(api, bob, r.tokenId);
+  await transfer(api, alice, r.tokenId, bob.address, 3);
+  p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
+  assert.equal(p.destroy, false);
+  assert.equal(p.rename, false);
+  await leaveToken(api, bob, r.tokenId);
+  assert.equal(await tokenBalance(api, r.tokenId, bob.address), 0n);
+  await renounce(api, alice, r.tokenId);
+  p = await creatorPowers(api, await tokenInfo(api, r.tokenId));
+  assert.deepEqual(p, { locked: true, mint: false, freeze: false, destroy: false, rename: false, restrict: false });
+});
+
+test("reserved names are refused before signing", async () => {
+  assert.equal(isReservedName("Tether USD", "USDT"), true);
+  assert.equal(isReservedName("my coin", "z00z"), true);
+  assert.equal(isReservedName("Club", "CLB"), false);
+  await assert.rejects(createToken(api, alice, { name: "ZOOZ", symbol: "ZOOZ", supply: 1 }), (e) => e.code === "tokens.ReservedName");
 });
 
 test("NFT collection, mint, send", async () => {
@@ -123,6 +163,7 @@ test("NFT collection, mint, send", async () => {
 
 test("two transactions at once from the same account both go through", async () => {
   const { tokenId } = await createToken(api, alice, { name: "Rapide", symbol: "FAST", supply: 100 });
+  await acceptToken(api, bob, tokenId);
   await Promise.all([transfer(api, alice, tokenId, bob.address, 1), mint(api, alice, tokenId, alice.address, 5)]);
   assert.equal(await tokenBalance(api, tokenId, bob.address), 1n);
   assert.equal((await tokenInfo(api, tokenId)).supply, 105n);

@@ -1,0 +1,26 @@
+# Fourth founder validator, temporarily on the public RPC server (same host as the archive node)
+# so that one validator down no longer stops finality (GRANDPA needs more than 2/3). Move it to its
+# own server, at another host, when new validators join. Keys: ../../validator/insert-keys.sh with
+# deploy/secrets/testnet/validator-4; then scripts/e2e/add-founder-validator.mjs.
+services:
+  validator:
+    image: ${IMAGE:-coali-node:testnet}
+    container_name: coali-validator-4
+    restart: unless-stopped
+    command:
+      - --chain=/spec/coali-testnet-raw.json
+      - --base-path=/data
+      - --validator
+      - --name=${NODE_NAME}
+      - --node-key-file=/data/node-key
+      - --port=30334
+      - --rpc-port=9944
+      - --rpc-methods=safe
+    ports:
+      - "30334:30334"
+    volumes:
+      - data:/data
+      - ./spec:/spec:ro
+
+volumes:
+  data:

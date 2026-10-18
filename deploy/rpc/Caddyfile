@@ -2,7 +2,35 @@
 	email {$ACME_EMAIL}
 }
 
+# Security headers shared by every site. The pages use small inline scripts, so scripts may be
+# inline but never come from another origin.
+(headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+	}
+}
+
+(csp) {
+	header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: {args[0]}; connect-src 'self' https://rpc.{$DOMAIN} wss://rpc.{$DOMAIN}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+}
+
+# Dotfiles and deployment files are never served (single-page fallbacks would otherwise answer 200).
+(hidden) {
+	@hidden path /.* */.* /docker-compose.yml /Dockerfile /*.env /*.env.* /package.json /package-lock.json
+	handle @hidden {
+		respond 404
+	}
+}
+
 {$DOMAIN} {
+	import headers
+	import csp
+	import hidden
 	handle /coali-testnet-raw.json {
 		root * /srv/spec
 		file_server
@@ -19,10 +47,15 @@
 }
 
 rpc.{$DOMAIN} {
+	import headers
 	reverse_proxy rpc:9944
 }
 
 explorer.{$DOMAIN} {
+	import headers
+	# NFT images live on other hosts (IPFS gateways…) and are only loaded on request.
+	import csp https:
+	import hidden
 	handle /api/* {
 		reverse_proxy scan:8090
 	}
@@ -34,6 +67,8 @@ explorer.{$DOMAIN} {
 }
 
 apps.{$DOMAIN} {
+	import headers
+	import hidden
 	@root {
 		path /
 		not query rpc=*
@@ -43,5 +78,8 @@ apps.{$DOMAIN} {
 }
 
 faucet.{$DOMAIN} {
+	import headers
+	import csp
+	import hidden
 	reverse_proxy faucet:8080
 }

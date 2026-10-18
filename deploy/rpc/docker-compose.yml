@@ -18,6 +18,13 @@ services:
       - --rpc-methods=safe
       - --rpc-cors=all
       - --rpc-max-connections=500
+      # Public limits: per connection, calls per minute, batch length and subscriptions. Internal
+      # services (docker networks) are exempt; visitors are identified by Caddy's X-Forwarded-For.
+      - --rpc-rate-limit=1800
+      - --rpc-rate-limit-whitelisted-ips=172.16.0.0/12
+      - --rpc-rate-limit-trust-proxy-headers
+      - --rpc-max-batch-request-len=50
+      - --rpc-max-subscriptions-per-connection=256
       - --state-pruning=archive
       - --blocks-pruning=archive-canonical
     ports:

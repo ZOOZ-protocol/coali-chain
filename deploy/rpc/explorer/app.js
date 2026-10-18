@@ -223,7 +223,15 @@ function eventLabel(e, me) {
     case "tokenAllowlist.RestrictionSet":
       return d.restricted ? `🔒 ${tokLink(d.asset)} : ${t("only allowlisted accounts can receive it", "seuls les comptes de la liste blanche peuvent le recevoir")}` : `🔓 ${tokLink(d.asset)} : ${t("anyone can receive it again", "tout le monde peut de nouveau le recevoir")}`;
     case "tokenAllowlist.SupplyFixed":
-      return `🔐 ${t("Supply of", "Quantité de")} ${tokLink(d.asset)} ${t("locked forever: no more can be created", "bloquée pour toujours : plus aucun ne peut être créé")}`;
+      return `🔐 ${tokLink(d.asset)} ${t("locked forever: its creator renounced (no more minting, destroying, renaming or restricting)", "verrouillé pour toujours : son créateur a renoncé (plus de création, destruction, renommage ni restriction)")}`;
+    case "assets.Touched":
+      return `🤝 ${addr(d.who)} ${t("accepted the token", "a accepté le token")} ${tokLink(d.assetId)}`;
+    case "assets.ApprovedTransfer":
+      return `🎁 ${tokAmt(d.assetId, d.amount)} ${t("offered by", "proposés par")} ${addr(d.source)} ${t("to", "à")} ${addr(d.delegate)}`;
+    case "assets.TransferredApproved":
+      return `🎁 ${tokAmt(d.assetId, d.amount)} ${t("collected by", "récupérés par")} ${addr(d.destination)} ${t("from", "de")} ${addr(d.owner)}`;
+    case "assets.ApprovalCancelled":
+      return `↩️ ${t("Offer of", "Offre de")} ${tokLink(d.assetId)} ${t("withdrawn by", "retirée par")} ${addr(d.owner)}`;
     case "tokenAllowlist.AccountAllowed":
       return `✅ ${addr(d.who)} ${t("added to the allowlist of", "ajouté à la liste blanche de")} ${tokLink(d.asset)}`;
     case "tokenAllowlist.AccountRemoved":
@@ -666,6 +674,30 @@ async function tokensPage(p) {
   </tbody></table>` : `<div class="empty">${t("No collection yet.", "Aucune collection pour l'instant.")}</div>`}</div>`;
 }
 
+// Token ids vouched for by the foundation; every other token is marked "Not verified".
+const VERIFIED_TOKENS = [];
+const verifiedTag = (id) =>
+  VERIFIED_TOKENS.includes(Number(id))
+    ? `<span class="tag ok">✓ ${t("Verified by ZOOZ", "Vérifié par ZOOZ")}</span>`
+    : `<span class="tag warn" title="${t("Anyone can create a token with any name.", "N'importe qui peut créer un token avec n'importe quel nom.")}">⚠ ${t("Not verified", "Non vérifié")}</span>`;
+
+// What the creator can still do, as the chain enforces it (runtime 205).
+function creatorPowers(x) {
+  const heldByOthers = x.holders > (x.ownerHolds ? 1 : 0);
+  const locked = x.fixedSupply;
+  const rows = [
+    [t("Create more", "En créer plus"), !locked],
+    [t("Freeze holders or take tokens back (regulated token)", "Geler des détenteurs ou reprendre des tokens (token réglementé)"), x.restricted],
+    [t("Destroy it", "Le détruire"), !locked && !heldByOthers],
+    [t("Rename it", "Le renommer"), !locked && !heldByOthers],
+    [t("Restrict who can receive it", "Restreindre qui peut le recevoir"), !locked && BigInt(x.supply || 0) === 0n],
+  ];
+  return `<div class="card"><div class="card-h">${t("What its creator can still do", "Ce que son créateur peut encore faire")}</div><div class="mini">
+    ${locked ? `<div class="sm">🔒 ${t("Its creator renounced: this token can no longer change.", "Son créateur a renoncé : ce token ne peut plus changer.")}</div>` : ""}
+    ${rows.map(([label, can]) => `<div><div class="k">${label}</div><div>${can ? `<span class="tag warn">${t("Yes", "Oui")}</span>` : `<span class="tag ok">${t("No", "Non")}</span>`}</div></div>`).join("")}
+  </div></div>`;
+}
+
 async function tokenPage(id, p) {
   const x = await get(`/token/${encodeURIComponent(id)}${p.before ? "?before=" + p.before : ""}`);
   if (!x) return notFound();
@@ -673,13 +705,13 @@ async function tokenPage(id, p) {
   const supply = BigInt(x.supply || 0);
   const pct = (b) => (supply ? ((Number((BigInt(b) * 10000n) / supply) / 100).toLocaleString(L === "fr" ? "fr-FR" : "en-US") + " %") : "—");
   const evRows = x.events.filter((e) => eventLabel(e));
-  app().innerHTML = `${title(`🪙 ${esc(x.name || t("Token", "Token"))}`, `<span class="tag">${esc(x.symbol || "#" + x.id)}</span> ${x.restricted ? lockTag() : ""} ${x.fixedSupply ? fixedTag() : ""} ${x.status !== "Live" ? `<span class="tag warn">${esc(x.status)}</span>` : ""}`)}
+  app().innerHTML = `${title(`🪙 ${esc(x.name || t("Token", "Token"))}`, `<span class="tag">${esc(x.symbol || "#" + x.id)}</span> ${verifiedTag(x.id)} ${x.restricted ? lockTag() : ""} ${x.fixedSupply ? fixedTag() : ""} ${x.status !== "Live" ? `<span class="tag warn">${esc(x.status)}</span>` : ""}`)}
   <div class="grid2">
     <div class="card"><div class="card-h">${t("Overview", "Aperçu")}</div><div class="mini">
       <div><div class="k">${t("Total supply", "Quantité totale")}</div><div class="bal">${units(x.supply, x.decimals, x.decimals)} ${esc(x.symbol)}</div></div>
       <div><div class="k">${t("Holders", "Détenteurs")}</div><div>${num(x.holders)}</div></div>
       <div><div class="k">${t("Supply", "Quantité")}</div><div>${x.fixedSupply ? fixedTag() : t("The creator can create more", "Le créateur peut en créer davantage")}</div></div>
-      <div><div class="k">${t("Transfer rule", "Règle de transfert")}</div><div>${x.restricted ? `${lockTag()} <span class="sm">${num(x.allowlist.length)} ${t("approved accounts", "comptes approuvés")}</span>` : t("Anyone can receive it", "Tout le monde peut le recevoir")}</div></div>
+      <div><div class="k">${t("Transfer rule", "Règle de transfert")}</div><div>${x.restricted ? `${lockTag()} <span class="sm">${num(x.allowlist.length)} ${t("approved accounts", "comptes approuvés")}</span>` : t("Anyone who accepted it can receive it", "Quiconque l'a accepté peut le recevoir")}</div></div>
     </div></div>
     <div class="card"><div class="card-h">${t("Profile", "Profil")}</div><div class="mini">
       <div><div class="k">${t("Creator (owner)", "Créateur (propriétaire)")}</div><div>${addr(x.owner, 8)}</div></div>
@@ -687,7 +719,8 @@ async function tokenPage(id, p) {
       <div><div class="k">${t("Created", "Créé")}</div><div>${x.created ? `${t("block", "bloc")} ${blk(x.created.n)} <span class="muted">(${ago(x.created.ts)})</span>` : "—"}</div></div>
     </div></div>
   </div>
-  <div class="note">${t("To see this token in your wallet (SubWallet, Talisman): Manage tokens → Import token → network Coalichain testnet → asset ID", "Pour voir ce token dans votre wallet (SubWallet, Talisman) : Gérer les tokens → Importer un token → réseau Coalichain testnet → ID")} <b>${x.id}</b>. <a href="https://zooz.network/wallets" target="_blank">${t("Guide →", "Guide →")}</a></div>
+  ${creatorPowers(x)}
+  <div class="note">${t("To receive this token, accept it first (no junk tokens on Coalichain):", "Pour recevoir ce token, acceptez-le d'abord (pas de tokens poubelle sur Coalichain) :")} <a href="https://zooz.network/t/${x.id}" target="_blank">zooz.network/t/${x.id}</a>. ${t("To see it in your wallet (SubWallet, Talisman): Manage tokens → Import token → network Coalichain testnet → asset ID", "Pour le voir dans votre wallet (SubWallet, Talisman) : Gérer les tokens → Importer un token → réseau Coalichain testnet → ID")} <b>${x.id}</b>. <a href="https://zooz.network/wallets" target="_blank">${t("Guide →", "Guide →")}</a></div>
   <div class="grid2">
     <div class="card scroll"><div class="card-h">${t("Top holders", "Principaux détenteurs")}</div>
       ${x.holdersTop.length ? `<table><thead><tr><th>#</th><th>${t("Address", "Adresse")}</th><th>${t("Quantity", "Quantité")}</th><th>%</th></tr></thead><tbody>

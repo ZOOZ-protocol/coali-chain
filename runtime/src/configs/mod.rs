@@ -459,30 +459,97 @@ impl pallet_token_allowlist::Config for Runtime {
 	type MaxAccountsPerCall = ConstU32<100>;
 }
 
-/// Refuses token transfers and mints whose receiver is not allowed by the token's allowlist, and
-/// mints of tokens whose supply is locked. `force_transfer` is the token admin's call (a plain
-/// signed account), so it is filtered like the others. Root (through sudo) is not filtered.
+/// Symbols nobody may give a token (after [`normalized`]), and words its name may not contain:
+/// fake ZOOZ, stablecoins and major coins are the usual scam on a new chain. Root (through
+/// `force_set_metadata`) can still name the foundation's own tokens.
+const RESERVED_SYMBOLS: &[&str] = &[
+	"ZOOZ", "COALI", "USDT", "USDC", "BUSD", "DAI", "BTC", "WBTC", "ETH", "WETH", "BNB", "DOT", "KSM",
+	"SOL", "XRP", "TRUVOT",
+];
+const RESERVED_WORDS: &[&str] =
+	&["ZOOZ", "COALI", "TETHER", "USDCOIN", "BITCOIN", "ETHEREUM", "POLKADOT", "BINANCE", "TRUVOT", "POPOLITICA"];
+
+/// Uppercase letters and digits only, with 0 read as O and 1 as I, so `z00z` or `Co-ali` match.
+fn normalized(text: &[u8]) -> alloc::vec::Vec<u8> {
+	text.iter()
+		.filter(|c| c.is_ascii_alphanumeric())
+		.map(|c| match c.to_ascii_uppercase() {
+			b'0' => b'O',
+			b'1' => b'I',
+			c => c,
+		})
+		.collect()
+}
+
+fn is_reserved(name: &[u8], symbol: &[u8]) -> bool {
+	let (name, symbol) = (normalized(name), normalized(symbol));
+	let contains = |text: &[u8], word: &str| text.windows(word.len()).any(|w| w == word.as_bytes());
+	RESERVED_SYMBOLS.iter().any(|s| symbol == s.as_bytes()) ||
+		RESERVED_WORDS.iter().any(|w| contains(&name, w) || contains(&symbol, w))
+}
+
+/// Rules on the token calls of plain accounts (root, through sudo, is not filtered):
+/// - a token only arrives in an account that accepted it first (`assets.touch`), or with its
+///   owner, so nobody can fill an account's 16 token slots with junk; a sender who wants to give a
+///   token to someone new approves it (`approve_transfer`) and the receiver accepts and collects
+///   it (`touch` + `transfer_approved`);
+/// - receivers must be on the allowlist of restricted tokens, and locked tokens cannot be minted;
+/// - freezing, blocking, seizing (`force_transfer`) and burning someone else's balance are only
+///   for restricted (regulated) tokens, which are restricted before any unit exists;
+/// - once anyone but the owner holds a token, it can no longer be destroyed or renamed;
+/// - a locked token (`fix_supply`, the creator renouncing) can no longer be minted, destroyed,
+///   renamed or restricted;
+/// - reserved names and symbols are refused.
 pub struct TokenTransferRules;
 impl Contains<RuntimeCall> for TokenTransferRules {
 	fn contains(call: &RuntimeCall) -> bool {
 		use pallet_assets::Call as A;
-		let RuntimeCall::Assets(call) = call else { return true };
-		let (id, to) = match call {
-			A::transfer { id, target, .. } | A::transfer_keep_alive { id, target, .. } => (id, target),
-			A::transfer_all { id, dest, .. } => (id, dest),
-			A::transfer_approved { id, destination, .. } => (id, destination),
-			A::force_transfer { id, dest, .. } => (id, dest),
-			A::mint { id, beneficiary, .. } => {
-				if !TokenAllowlist::can_mint(&id.0) {
-					return false;
-				}
-				(id, beneficiary)
-			},
-			_ => return true,
+		use pallet_token_allowlist::Call as L;
+		let lookup = |to: &<<Runtime as frame_system::Config>::Lookup as StaticLookup>::Source| {
+			<Runtime as frame_system::Config>::Lookup::lookup(to.clone()).ok()
 		};
-		match <Runtime as frame_system::Config>::Lookup::lookup(to.clone()) {
-			Ok(who) => TokenAllowlist::can_receive(&id.0, &who),
-			Err(_) => true,
+		let details = |id: u32| pallet_assets::Asset::<Runtime>::get(id);
+		let restricted = |id: u32| pallet_token_allowlist::Restricted::<Runtime>::contains_key(id);
+		let locked = |id: u32| !TokenAllowlist::can_mint(&id);
+		// Whether accounts other than the owner hold the token.
+		let held_by_others = |id: u32| {
+			details(id).is_some_and(|d| {
+				let owner_holds = pallet_assets::Account::<Runtime>::contains_key(id, &d.owner);
+				d.accounts > owner_holds as u32
+			})
+		};
+		let may_receive = |id: u32, who: &AccountId| {
+			TokenAllowlist::can_receive(&id, who) &&
+				(pallet_assets::Account::<Runtime>::contains_key(id, who) ||
+					details(id).is_some_and(|d| &d.owner == who))
+		};
+
+		match call {
+			RuntimeCall::TokenAllowlist(L::set_restricted { asset, restricted: true }) =>
+				!locked(*asset) && details(*asset).is_some_and(|d| d.supply == 0),
+			RuntimeCall::Assets(call) => match call {
+				A::transfer { id, target, .. } | A::transfer_keep_alive { id, target, .. } =>
+					lookup(target).is_some_and(|to| may_receive(id.0, &to)),
+				A::transfer_all { id, dest, .. } => lookup(dest).is_some_and(|to| may_receive(id.0, &to)),
+				A::transfer_approved { id, destination, .. } =>
+					lookup(destination).is_some_and(|to| may_receive(id.0, &to)),
+				A::mint { id, beneficiary, .. } =>
+					!locked(id.0) && lookup(beneficiary).is_some_and(|to| may_receive(id.0, &to)),
+				A::force_transfer { id, dest, .. } =>
+					restricted(id.0) && lookup(dest).is_some_and(|to| may_receive(id.0, &to)),
+				A::burn { id, who, .. } =>
+					restricted(id.0) ||
+						lookup(who).is_some_and(|w| details(id.0).is_some_and(|d| d.admin == w)),
+				A::freeze { id, .. } | A::block { id, .. } => restricted(id.0),
+				A::freeze_asset { id } => restricted(id.0),
+				A::touch_other { .. } => false,
+				A::start_destroy { id } => !locked(id.0) && !held_by_others(id.0),
+				A::set_metadata { id, name, symbol, .. } =>
+					!locked(id.0) && !held_by_others(id.0) && !is_reserved(name, symbol),
+				A::clear_metadata { id } => !locked(id.0) && !held_by_others(id.0),
+				_ => true,
+			},
+			_ => true,
 		}
 	}
 }

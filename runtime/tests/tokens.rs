@@ -85,10 +85,17 @@ fn without_enough_zooz_no_token() {
 	});
 }
 
+fn accept(who: AccountId, id: u32) {
+	assert_ok!(send(who, RuntimeCall::Assets(pallet_assets::Call::touch { id: id.into() })));
+}
+
 #[test]
-fn tokens_move_freely_unless_restricted() {
+fn tokens_move_freely_to_accounts_that_accepted_them() {
 	new_ext().execute_with(|| {
 		let id = create_token(alice());
+		let filtered: DispatchError = frame_system::Error::<Runtime>::CallFiltered.into();
+		assert_eq!(send(alice(), transfer(id, bob(), 100)), Err(filtered));
+		accept(bob(), id);
 		assert_ok!(send(alice(), transfer(id, bob(), 100)));
 		assert_eq!(Assets::balance(id, bob()), 100);
 	});
@@ -97,15 +104,22 @@ fn tokens_move_freely_unless_restricted() {
 #[test]
 fn restricted_token_only_reaches_the_allowlist() {
 	new_ext().execute_with(|| {
-		let id = create_token(alice());
+		let id = FIRST_ASSET_ID;
+		assert_ok!(Assets::create(RuntimeOrigin::signed(alice()), id.into(), alice().into(), 1));
 		assert_ok!(send(
 			alice(),
-			RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::allow { asset: id, accounts: vec![bob()] })
+			RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::allow { asset: id, accounts: vec![alice(), bob()] })
 		));
 		assert_ok!(send(
 			alice(),
 			RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::set_restricted { asset: id, restricted: true })
 		));
+		assert_ok!(send(
+			alice(),
+			RuntimeCall::Assets(pallet_assets::Call::mint { id: id.into(), beneficiary: alice().into(), amount: 1_000 })
+		));
+		accept(bob(), id);
+		accept(charlie(), id);
 
 		assert_ok!(send(alice(), transfer(id, bob(), 100)));
 		let filtered: DispatchError = frame_system::Error::<Runtime>::CallFiltered.into();
@@ -183,6 +197,7 @@ fn locked_supply_cannot_grow() {
 		assert_eq!(send(alice(), mint()), Err(filtered));
 		assert_eq!(Assets::total_issuance(id), 1_000_001);
 		// Transfers still work.
+		accept(bob(), id);
 		assert_ok!(send(alice(), transfer(id, bob(), 1)));
 	});
 }
@@ -199,8 +214,9 @@ fn a_batch_creates_a_token_in_one_signature_and_still_obeys_the_rules() {
 				symbol: b"CLB".to_vec(),
 				decimals: 0,
 			}),
-			RuntimeCall::Assets(pallet_assets::Call::mint { id: id.into(), beneficiary: alice().into(), amount: 100 }),
+			RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::allow { asset: id, accounts: vec![alice()] }),
 			RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::set_restricted { asset: id, restricted: true }),
+			RuntimeCall::Assets(pallet_assets::Call::mint { id: id.into(), beneficiary: alice().into(), amount: 100 }),
 		];
 		assert_ok!(send(alice(), RuntimeCall::Utility(pallet_utility::Call::batch_all { calls })));
 		assert_eq!(Assets::balance(id, alice()), 100);

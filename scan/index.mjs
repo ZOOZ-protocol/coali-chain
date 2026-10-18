@@ -520,17 +520,20 @@ const routes = {
       api.query.assets.metadata(id),
       api.query.tokenAllowlist.restricted(id),
       api.query.tokenAllowlist.fixedSupply?.(id),
-      // Holders read in one page: the top 100 is computed among the first 5,000 accounts.
-      api.query.assets.account.entriesPaged({ args: [id], pageSize: 5000 }),
+      // Holders read in one page (nodes cap pages at 1,000): the top 100 among the first 1,000 accounts.
+      api.query.assets.account.entriesPaged({ args: [id], pageSize: 1000 }),
       api.query.tokenAllowlist.allowed.keysPaged({ args: [id], pageSize: 1000 }),
     ]);
     if (d.isNone) return null;
+    const owner = d.unwrap().owner.toString();
+    const ownerHolds = accounts.some(([k]) => k.args[1].toString() === owner);
     const holders = accounts
       .map(([k, v]) => ({ address: acc(k.args[1]), balance: v.unwrap().balance.toString() }))
       .sort((a, b) => (BigInt(b.balance) > BigInt(a.balance) ? 1 : BigInt(b.balance) < BigInt(a.balance) ? -1 : 0))
       .slice(0, 100);
     return {
       ...tokenOf(id, d.unwrap(), m, restricted.isSome, !!fixed?.isSome),
+      ownerHolds,
       holdersTop: holders,
       allowlist: allowed.map((k) => acc(k.args[1])),
       events: tokenEvents("assets", "assetId", id, p),

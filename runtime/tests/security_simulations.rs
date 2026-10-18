@@ -164,18 +164,25 @@ fn send(who: AccountId, call: RuntimeCall) -> Result<(), DispatchError> {
 	call.dispatch(RuntimeOrigin::signed(who)).map(|_| ()).map_err(|e| e.error)
 }
 
+/// A regulated token: restricted before any unit exists. `allowed` and `named("charlie")` (never
+/// allowed) have accepted it, so only the allowlist decides who receives it.
 fn restricted_token(owner: AccountId, allowed: Vec<AccountId>) -> u32 {
 	let id = FIRST_ASSET_ID;
 	assert_ok!(Assets::create(RuntimeOrigin::signed(owner.clone()), id.into(), owner.clone().into(), 1));
-	assert_ok!(Assets::mint(RuntimeOrigin::signed(owner.clone()), id.into(), owner.clone().into(), 1_000));
+	let mut list = allowed.clone();
+	list.push(owner.clone());
 	assert_ok!(send(
 		owner.clone(),
-		RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::allow { asset: id, accounts: allowed })
+		RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::allow { asset: id, accounts: list })
 	));
 	assert_ok!(send(
-		owner,
+		owner.clone(),
 		RuntimeCall::TokenAllowlist(pallet_token_allowlist::Call::set_restricted { asset: id, restricted: true })
 	));
+	assert_ok!(Assets::mint(RuntimeOrigin::signed(owner.clone()), id.into(), owner.into(), 1_000));
+	for who in allowed.into_iter().chain([named("charlie")]) {
+		assert_ok!(Assets::touch(RuntimeOrigin::signed(who), id.into()));
+	}
 	id
 }
 

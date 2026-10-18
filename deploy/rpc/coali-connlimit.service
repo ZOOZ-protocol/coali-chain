@@ -1,0 +1,17 @@
+# At most 200 simultaneous web connections (80/443) per visitor IP, so one machine cannot take
+# all the RPC node's connections. Install: copy to /etc/systemd/system/, then
+# systemctl enable --now coali-connlimit.
+[Unit]
+Description=Per-IP connection limit for the public web ports
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=RULE="DOCKER-USER -p tcp -m multiport --dports 80,443 -m connlimit --connlimit-above 200 --connlimit-mask 32 -j REJECT --reject-with tcp-reset"
+ExecStart=/bin/sh -c 'iptables -C $RULE 2>/dev/null || iptables -I $RULE'
+ExecStop=/bin/sh -c 'iptables -D $RULE 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
