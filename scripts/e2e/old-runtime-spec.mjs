@@ -1,12 +1,12 @@
 // Builds a local dev chain spec that starts on the runtime currently live on the testnet, so an
 // upgrade can be rehearsed with the exact code it will replace.
-// Usage: node old-runtime-spec.mjs <raw-dev-spec.json> <out.json> [wss://rpc.testnet.coali.app]
+// Usage: node old-runtime-spec.mjs <raw-dev-spec.json> <out.json> [wss://rpc.testnet.zooz.network]
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { xxhashAsHex } from "@polkadot/util-crypto";
 
-const [specPath, outPath, ws = "wss://rpc.testnet.coali.app"] = process.argv.slice(2);
+const [specPath, outPath, ws = "wss://rpc.testnet.zooz.network"] = process.argv.slice(2);
 const provider = new WsProvider(ws);
 const api = await ApiPromise.create({ provider, noInitWarn: true });
 const code = await provider.send("state_getStorage", ["0x3a636f6465"]);

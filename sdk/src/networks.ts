@@ -14,9 +14,9 @@ export interface Network {
 
 export const TESTNET: Network = {
   name: "Coali Testnet",
-  rpc: "wss://rpc.testnet.coali.app",
-  explorer: "https://explorer.testnet.coali.app",
-  api: "https://explorer.testnet.coali.app/api",
+  rpc: "wss://rpc.testnet.zooz.network",
+  explorer: "https://explorer.testnet.zooz.network",
+  api: "https://explorer.testnet.zooz.network/api",
   ss58: 42,
   decimals: 9,
 };

@@ -478,71 +478,69 @@ export const renounce = (api: ApiPromise, sender: Sender, id: number) => fixSupp
 const RESERVED_SYMBOLS = ["ZOOZ", "COALI", "USDT", "USDC", "BUSD", "DAI", "BTC", "WBTC", "ETH", "WETH", "BNB", "DOT", "KSM", "SOL", "XRP", "TRUVOT"];
 const RESERVED_WORDS = ["ZOOZ", "COALI", "TETHER", "USDCOIN", "BITCOIN", "ETHEREUM", "POLKADOT", "BINANCE", "TRUVOT", "POPOLITICA"];
 
-const inRanges = (cp: number, ranges: [number, number][]) => ranges.some(([a, b]) => cp >= a && cp <= b);
-const INVISIBLE: [number, number][] = [
-  [0x00, 0x1f], [0x7f, 0x9f], [0xad, 0xad], [0x34f, 0x34f], [0x61c, 0x61c], [0x115f, 0x1160], [0x17b4, 0x17b5],
-  [0x180b, 0x180f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x206f], [0x3164, 0x3164], [0xfe00, 0xfe0f],
-  [0xfeff, 0xfeff], [0xffa0, 0xffa0], [0xe0000, 0xe0fff],
-];
-const LOOKALIKES: Record<string, [number, number][]> = {
-  A: [[0xc0, 0xc5], [0xe0, 0xe5], [0x100, 0x105], [0x391, 0x391], [0x3b1, 0x3b1], [0x410, 0x410], [0x430, 0x430]],
-  B: [[0x392, 0x392], [0x412, 0x412], [0x432, 0x432]],
-  C: [[0xc7, 0xc7], [0xe7, 0xe7], [0x106, 0x10d], [0x421, 0x421], [0x441, 0x441], [0x3f2, 0x3f2], [0x3f9, 0x3f9]],
-  D: [[0x10e, 0x111], [0x501, 0x501]],
-  E: [[0xc8, 0xcb], [0xe8, 0xeb], [0x112, 0x11b], [0x395, 0x395], [0x3b5, 0x3b5], [0x415, 0x415], [0x435, 0x435], [0x401, 0x401], [0x451, 0x451]],
-  H: [[0x397, 0x397], [0x41d, 0x41d], [0x43d, 0x43d]],
-  I: [[0xcc, 0xcf], [0xec, 0xef], [0x128, 0x131], [0x399, 0x399], [0x3b9, 0x3b9], [0x406, 0x406], [0x456, 0x456], [0x4c0, 0x4c0]],
-  J: [[0x408, 0x408], [0x458, 0x458]],
-  K: [[0x39a, 0x39a], [0x3ba, 0x3ba], [0x41a, 0x41a], [0x43a, 0x43a]],
-  M: [[0x39c, 0x39c], [0x41c, 0x41c], [0x43c, 0x43c]],
-  N: [[0xd1, 0xd1], [0xf1, 0xf1], [0x143, 0x148], [0x39d, 0x39d]],
-  O: [[0xd2, 0xd6], [0xd8, 0xd8], [0xf2, 0xf6], [0xf8, 0xf8], [0x14c, 0x151], [0x39f, 0x39f], [0x3bf, 0x3bf], [0x41e, 0x41e], [0x43e, 0x43e], [0x3a9, 0x3a9]],
-  P: [[0x3a1, 0x3a1], [0x3c1, 0x3c1], [0x420, 0x420], [0x440, 0x440]],
-  Q: [[0x51a, 0x51b]],
-  S: [[0x15a, 0x161], [0x405, 0x405], [0x455, 0x455]],
-  T: [[0x3a4, 0x3a4], [0x3c4, 0x3c4], [0x422, 0x422], [0x442, 0x442]],
-  U: [[0xd9, 0xdc], [0xf9, 0xfc], [0x168, 0x173], [0x3c5, 0x3c5]],
-  V: [[0x3bd, 0x3bd], [0x474, 0x475]],
-  W: [[0x51c, 0x51d]],
-  X: [[0x3a7, 0x3a7], [0x3c7, 0x3c7], [0x425, 0x425], [0x445, 0x445]],
-  Y: [[0xdd, 0xdd], [0xfd, 0xfd], [0xff, 0xff], [0x176, 0x178], [0x3a5, 0x3a5], [0x423, 0x423], [0x443, 0x443], [0x4ae, 0x4af]],
-  Z: [[0x179, 0x17e], [0x396, 0x396]],
-};
+// Same name rule as the runtime (runtime 205): an allowlist of scripts. ASCII, accented Latin
+// (read as plain Latin), Hebrew, Arabic, punctuation, currency signs and emojis; anything else is
+// refused, which rules out look-alike letters from other alphabets and invisible characters.
+const LATIN_1 = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTSAAAAAAACEEEEIIIIDNOOOOO*OUUUUYTY";
+const LATIN_EXT_A =
+  "AAAAAACCCCCCCCDDDDEEEEEEEEEEGGGGGGGGHHHHIIIIIIIIIIIIJJKKKLLLLLLLLLLNNNNNNNNNOOOOOOOORRRRRRSSSSSSSSTTTTTTUUUUUUUUUUUUWWYYYZZZZZZS";
 
-/** The Latin capital or digit a character passes for (same table as the runtime), or null. */
-function latinLookalike(cp: number): string | null {
-  if ((cp >= 0x30 && cp <= 0x39) || (cp >= 0x41 && cp <= 0x5a) || (cp >= 0x61 && cp <= 0x7a)) return String.fromCharCode(cp).toUpperCase();
-  if (cp >= 0xff10 && cp <= 0xff19) return String.fromCharCode(0x30 + cp - 0xff10);
-  if (cp >= 0xff21 && cp <= 0xff3a) return String.fromCharCode(0x41 + cp - 0xff21);
-  if (cp >= 0xff41 && cp <= 0xff5a) return String.fromCharCode(0x41 + cp - 0xff41);
-  if (cp >= 0x1d400 && cp <= 0x1d6a3) return String.fromCharCode(0x41 + (((cp - 0x1d400) % 52) % 26));
-  if (cp >= 0x1d7ce && cp <= 0x1d7ff) return String.fromCharCode(0x30 + ((cp - 0x1d7ce) % 10));
-  for (const [letter, ranges] of Object.entries(LOOKALIKES)) if (inRanges(cp, ranges)) return letter;
+type NameChar = { latin: string } | "other" | "emoji" | "joiner" | null;
+
+function nameChar(cp: number): NameChar {
+  const within = (a: number, b: number) => cp >= a && cp <= b;
+  if (within(0x30, 0x39) || within(0x41, 0x5a) || within(0x61, 0x7a)) return { latin: String.fromCharCode(cp).toUpperCase() };
+  if (within(0x20, 0x7e)) return "other";
+  if ([0xaa, 0xad, 0xb2, 0xb3, 0xb5, 0xb9, 0xba].includes(cp)) return null;
+  if (within(0xa0, 0xbf)) return "other";
+  if (within(0xc0, 0xff)) return LATIN_1[cp - 0xc0] === "*" ? "other" : { latin: LATIN_1[cp - 0xc0] };
+  if (within(0x100, 0x17f)) return { latin: LATIN_EXT_A[cp - 0x100] };
+  if (within(0x590, 0x5ff)) return "other";
+  if (within(0x600, 0x605) || cp === 0x61c || cp === 0x6dd) return null;
+  if (within(0x600, 0x6ff)) return "other";
+  if (within(0x2010, 0x2027) || within(0x2030, 0x205e) || within(0x20a0, 0x20c0)) return "other";
+  if (within(0x2600, 0x27bf) || within(0x1f300, 0x1faff)) return "emoji";
+  if (cp === 0x200d || cp === 0xfe0f) return "joiner";
   return null;
 }
 
-/** Look-alike skeleton in Latin capitals (0 read as O, 1 as I), or null with invisible characters. */
-function skeleton(text: string): string | null {
-  let out = "";
+/** Latin words of a name (0 read as O, 1 as I) and all its Latin letters together, or null. */
+function nameSkeleton(text: string): { words: string[]; all: string } | null {
+  const words: string[] = [];
+  let all = "";
+  let word = "";
+  let inEmoji = false;
   for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    if (inRanges(cp, INVISIBLE)) return null;
-    const l = latinLookalike(cp);
-    if (l) out += l === "0" ? "O" : l === "1" ? "I" : l;
+    const c = nameChar(ch.codePointAt(0)!);
+    if (c === null || (c === "joiner" && !inEmoji)) return null;
+    if (typeof c === "object") {
+      const l = c.latin === "0" ? "O" : c.latin === "1" ? "I" : c.latin;
+      word += l;
+      all += l;
+    } else if (word) {
+      words.push(word);
+      word = "";
+    }
+    inEmoji = c === "emoji" || c === "joiner";
   }
-  return out;
+  if (word) words.push(word);
+  return { words, all };
 }
 
 /**
  * Same rule as the chain (runtime 205): the symbol must be 1 to 12 Latin letters or digits, the
- * name must have no invisible character, and neither may pass for ZOOZ, a stablecoin or a major
- * coin — including with look-alike letters from other alphabets. True when refused.
+ * name may only use ASCII, accented Latin, Hebrew, Arabic, punctuation, currency signs and emojis,
+ * neither may contain ZOOZ, COALI, TETHER, BITCOIN… and the name may not have USDT, BTC, ETH… as
+ * a whole word. True when refused.
  */
 export function isReservedName(name: string, symbol: string): boolean {
   if (!/^[A-Za-z0-9]{1,12}$/.test(symbol)) return true;
-  const [n, s] = [skeleton(name), skeleton(symbol)];
+  const [n, s] = [nameSkeleton(name), nameSkeleton(symbol)];
   if (n === null || s === null) return true;
-  return RESERVED_SYMBOLS.includes(s) || RESERVED_WORDS.some((w) => n.includes(w) || s.includes(w));
+  return (
+    RESERVED_SYMBOLS.some((r) => s.all === r || n.words.includes(r)) ||
+    RESERVED_WORDS.some((w) => n.all.includes(w) || s.all.includes(w))
+  );
 }
 
 /** Manages a token's allowlist (creator only): add / remove accounts, turn the restriction on or off. */

@@ -70,8 +70,9 @@ fn t01_reserved_names_are_refused() {
 		assert!(!named(b"Wrapped", b"WZOOZ"));
 		assert!(!named(b"Bitcoin cash", b"BCH"));
 		assert!(named(b"Maison Tel Aviv", b"MTA"));
-		// Look-alike letters from other alphabets, full width, invisible characters (double check
-		// TOK-05), and symbols outside Latin letters and digits.
+		// Names use an allowlist of scripts (double check TOK-05, both rounds): look-alikes from any
+		// other alphabet or Unicode block, invisible characters, and reserved symbols as whole words
+		// of the name are refused; symbols are Latin letters and digits only.
 		for (name, symbol) in [
 			("ZΟΟZ", "CLB"),
 			("Club", "ZООZ"),
@@ -81,14 +82,39 @@ fn t01_reserved_names_are_refused() {
 			("Club\u{202E}", "CLB"),
 			("𝐙𝐎𝐎𝐙 fan", "CLB"),
 			("Zööz", "CLB"),
+			("ᴢᴏᴏᴢ", "ZZ1"),
+			("ⓏⓄⓄⓏ", "ZZ2"),
+			("ℤ𝕆𝕆ℤ", "ZZ3"),
+			("ƵOOƵ", "ZZ4"),
+			("ᏃOOᏃ", "ZZ5"),
+			("ᶻᵒᵒᶻ", "ZZ6"),
+			("Zºº Z", "ZZ7"),
+			("Ζωή", "ZOE"),
+			("Z\u{FE0F}OOZ", "ZZ8"),
+			("USDT", "USDTT"),
+			("Wrapped BTC", "WBTCX"),
+			("ETH", "ETH2"),
+			("Sol club", "SOLC"),
+			("Club S0L", "CLB"),
 			("Club", "CL B"),
 			("Club", "CLÉ"),
 			("Club", ""),
 		] {
 			assert!(!named(name.as_bytes(), symbol.as_bytes()), "{name} / {symbol} should be refused");
 		}
-		// Real names in other alphabets stay possible.
-		for (name, symbol) in [("Club des élèves", "ELV"), ("מועדון תל אביב", "TLV"), ("Club 🎉", "PARTY"), ("Ζωή", "ZOE")] {
+		// Real names stay possible: Hebrew, Arabic, accents, punctuation, currency signs, emojis
+		// (with their variation selector and joiner), and words that merely contain a coin symbol.
+		for (name, symbol) in [
+			("Club des élèves", "ELV"),
+			("מועדון תל אביב", "TLV"),
+			("זוז שלום 🎉", "SHALOM"),
+			("نادي يافا", "JAFFA"),
+			("Club 🎉", "PARTY"),
+			("Amour ❤\u{FE0F}", "LOVE"),
+			("Famille 👨\u{200D}👩\u{200D}👧", "FAM"),
+			("Café « Le Soleil » – 10 ₪", "CAFE"),
+			("Solar Dots", "SOLAR"),
+		] {
 			assert!(named(name.as_bytes(), symbol.as_bytes()), "{name} / {symbol} should be allowed");
 		}
 		// The foundation can still name its own tokens, through root.

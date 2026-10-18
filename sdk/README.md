@@ -94,9 +94,9 @@ Decision ids are accepted as app UUIDs (`3f2a9c1e-…`) or on-chain ids (`0x3f2a
 
 | | Testnet |
 |---|---|
-| RPC | `wss://rpc.testnet.coali.app` |
-| Explorer | <https://explorer.testnet.coali.app> |
-| Explorer API | `https://explorer.testnet.coali.app/api` |
+| RPC | `wss://rpc.testnet.zooz.network` |
+| Explorer | <https://explorer.testnet.zooz.network> |
+| Explorer API | `https://explorer.testnet.zooz.network/api` |
 | Address format | SS58, prefix 42 |
 | Token | ZOOZ, 9 decimals |
 

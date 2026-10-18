@@ -89,3 +89,35 @@ faucet.{$DOMAIN} {
 	import hidden
 	reverse_proxy faucet:8080
 }
+
+# Former names (testnet.coali.app), during the move to testnet.zooz.network: permanent redirects,
+# to be removed with their DNS records one week after the move (docs/migration-testnet-zooz-network.md).
+testnet.coali.app {
+	import headers
+	redir https://testnet.zooz.network{uri} permanent
+}
+
+explorer.testnet.coali.app {
+	import headers
+	redir https://explorer.testnet.zooz.network{uri} permanent
+}
+
+faucet.testnet.coali.app {
+	import headers
+	redir https://faucet.testnet.zooz.network{uri} permanent
+}
+
+apps.testnet.coali.app {
+	import headers
+	redir https://apps.testnet.zooz.network{uri} permanent
+}
+
+# WebSocket clients do not follow redirects: the former RPC name stays served until the end.
+rpc.testnet.coali.app {
+	import headers
+	reverse_proxy rpc:9944 {
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up -X-Forwarded-For
+	}
+}

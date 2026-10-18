@@ -4,10 +4,10 @@ Le testnet tourne sur 4 serveurs Hetzner (Docker) :
 
 | Serveur | Rôle | DNS |
 |---|---|---|
-| validator-1 (fsn1) | validateur fondateur | v1.testnet.coali.app |
-| validator-2 (nbg1) | validateur fondateur | v2.testnet.coali.app |
-| validator-3 (hel1) | validateur fondateur | v3.testnet.coali.app |
-| rpc (fsn1) | nœud RPC archive, explorateur, faucet, relayer | rpc / explorer / faucet.testnet.coali.app |
+| validator-1 (fsn1) | validateur fondateur | v1.testnet.zooz.network |
+| validator-2 (nbg1) | validateur fondateur | v2.testnet.zooz.network |
+| validator-3 (hel1) | validateur fondateur, relayer (`deploy/relayer`) | v3.testnet.zooz.network |
+| rpc (fsn1) | nœud RPC archive, explorateur, faucet, watchdog / oracle, validateur fondateur 4 (temporaire) | rpc / explorer / faucet / apps.testnet.zooz.network |
 
 Seul le port p2p `30333` est public sur les validateurs. Sur le serveur rpc, Caddy sert le HTTPS (`80`/`443`).
 
@@ -15,7 +15,7 @@ Seul le port p2p `30333` est public sur les validateurs. Sur le serveur rpc, Cad
 
 ```bash
 deploy/gen-testnet-keys.sh 3 testnet
-deploy/gen-testnet-spec.sh testnet v1.testnet.coali.app v2.testnet.coali.app v3.testnet.coali.app
+deploy/gen-testnet-spec.sh testnet v1.testnet.zooz.network v2.testnet.zooz.network v3.testnet.zooz.network
 ```
 
 - Les secrets vont dans `deploy/secrets/testnet/` (ignoré par git). Il faut les sauvegarder hors ligne.
@@ -46,7 +46,7 @@ docker compose up -d
 
 Dans `/opt/coali-chain/deploy/rpc/` :
 
-1. Créer un `.env` contenant `DOMAIN=testnet.coali.app` et `ACME_EMAIL=…`.
+1. Créer un `.env` contenant `DOMAIN=testnet.zooz.network` et `ACME_EMAIL=…`.
 2. Copier `spec/coali-testnet-raw.json`.
 3. Créer un `faucet.env` contenant `FAUCET_URI=<phrase du compte faucet>`.
 4. Lancer :
@@ -72,7 +72,7 @@ Procédure pour l'opérateur :
      -d '{"id":1,"jsonrpc":"2.0","method":"author_rotateKeysWithOwner","params":["<clé publique du compte validateur, hex>"]}' \
      http://127.0.0.1:9944
    ```
-3. Obtenir des tokens de test sur https://faucet.testnet.coali.app.
+3. Obtenir des tokens de test sur https://faucet.testnet.zooz.network.
 4. Appeler `session.setKeys(keys, proof)` depuis le compte validateur, dans l'explorateur, onglet Developer > Extrinsics.
 5. Donner son adresse de validateur à Coali. Coali vérifie l'éligibilité du compte, puis lie l'adresse :
    ```bash

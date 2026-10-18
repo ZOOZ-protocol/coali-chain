@@ -36,8 +36,8 @@ input,textarea{width:100%;background:#0b1020;border:1px solid var(--line);border
   <span data-l="en">Connect to the server with SSH and paste:</span><span data-l="fr">Connectez-vous au serveur en SSH et collez :</span>
 <pre><button onclick="cpPre(this)">copy</button>apt-get update && apt-get install -y docker.io
 mkdir -p ~/coali && cd ~/coali
-curl -fsSLO https://testnet.coali.app/downloads/coali-node-docker.tar.gz
-curl -fsSLO https://testnet.coali.app/coali-testnet-raw.json
+curl -fsSLO https://testnet.zooz.network/downloads/coali-node-docker.tar.gz
+curl -fsSLO https://testnet.zooz.network/coali-testnet-raw.json
 gunzip -c coali-node-docker.tar.gz | docker load
 docker volume create coali-data
 docker run --rm -v coali-data:/data coali-node:testnet key generate-node-key --file /data/node-key
@@ -52,8 +52,8 @@ docker run -d --name coali --restart unless-stopped \
 </li>
 <li>
   <b class="t" data-l="en">Create your validator account</b><b class="t" data-l="fr">Créez votre compte validateur</b>
-  <span data-l="en">In SubWallet or Talisman, create a dedicated account (e.g. "My Coali validator") and get free ZOOZ for it on the <a href="https://faucet.testnet.coali.app">faucet</a> (needed for one transaction fee). Paste its address here:</span>
-  <span data-l="fr">Dans SubWallet ou Talisman, créez un compte dédié (ex. « Mon validateur Coali ») et obtenez-lui des ZOOZ gratuits sur le <a href="https://faucet.testnet.coali.app">faucet</a> (nécessaires pour les frais d'une transaction). Collez son adresse ici :</span>
+  <span data-l="en">In SubWallet or Talisman, create a dedicated account (e.g. "My Coali validator") and get free ZOOZ for it on the <a href="https://faucet.testnet.zooz.network">faucet</a> (needed for one transaction fee). Paste its address here:</span>
+  <span data-l="fr">Dans SubWallet ou Talisman, créez un compte dédié (ex. « Mon validateur Coali ») et obtenez-lui des ZOOZ gratuits sur le <a href="https://faucet.testnet.zooz.network">faucet</a> (nécessaires pour les frais d'une transaction). Collez son adresse ici :</span>
   <input id="addr" placeholder="5…" oninput="mkCmd()" style="margin-top:8px">
   <div class="out" id="cmdbox" style="display:none">
     <span data-l="en">Then run this on the server: it creates your session keys inside the node and signs a proof that they belong to your account.</span>
@@ -67,8 +67,8 @@ docker run -d --name coali --restart unless-stopped \
   <span data-l="fr">Collez la réponse complète de la commande précédente (<code>{"jsonrpc":"2.0","result":{"keys":…,"proof":…}}</code>) :</span>
   <textarea id="res" rows="3" oninput="split()" style="margin-top:8px"></textarea>
   <div class="out" id="splitbox" style="display:none">
-    <span data-l="en">Open the <a href="https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorer › Developer › Extrinsics</a>, pick your validator account, choose <code>session</code> › <code>setKeys(keys, proof)</code> and fill in:</span>
-    <span data-l="fr">Ouvrez l'<a href="https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app#/extrinsics" target="_blank">explorateur › Developer › Extrinsics</a>, choisissez votre compte validateur, sélectionnez <code>session</code> › <code>setKeys(keys, proof)</code> et remplissez :</span>
+    <span data-l="en">Open the <a href="https://apps.testnet.zooz.network/?rpc=wss://rpc.testnet.zooz.network#/extrinsics" target="_blank">explorer › Developer › Extrinsics</a>, pick your validator account, choose <code>session</code> › <code>setKeys(keys, proof)</code> and fill in:</span>
+    <span data-l="fr">Ouvrez l'<a href="https://apps.testnet.zooz.network/?rpc=wss://rpc.testnet.zooz.network#/extrinsics" target="_blank">explorateur › Developer › Extrinsics</a>, choisissez votre compte validateur, sélectionnez <code>session</code> › <code>setKeys(keys, proof)</code> et remplissez :</span>
     <p><b>keys › aura</b><br><span class="copy" id="aura" onclick="cp(this)"></span></p>
     <p><b>keys › grandpa</b><br><span class="copy" id="gran" onclick="cp(this)"></span></p>
     <p><b>proof</b><br><span class="copy" id="proof" onclick="cp(this)"></span></p>
@@ -83,8 +83,8 @@ docker run -d --name coali --restart unless-stopped \
 </li>
 <li>
   <b class="t" data-l="en">Check you are validating</b><b class="t" data-l="fr">Vérifiez que vous validez</b>
-  <span data-l="en">On the explorer's <a href="https://explorer.testnet.coali.app/validators" target="_blank">Validators</a> page, your address is in the list. Your node logs show <code>🎁 Prepared block for proposing</code>.</span>
-  <span data-l="fr">Sur la page <a href="https://explorer.testnet.coali.app/validators" target="_blank">Validateurs</a> de l'explorateur, votre adresse est dans la liste. Les logs de votre nœud affichent <code>🎁 Prepared block for proposing</code>.</span>
+  <span data-l="en">On the explorer's <a href="https://explorer.testnet.zooz.network/validators" target="_blank">Validators</a> page, your address is in the list. Your node logs show <code>🎁 Prepared block for proposing</code>.</span>
+  <span data-l="fr">Sur la page <a href="https://explorer.testnet.zooz.network/validators" target="_blank">Validateurs</a> de l'explorateur, votre adresse est dans la liste. Les logs de votre nœud affichent <code>🎁 Prepared block for proposing</code>.</span>
 </li>
 </ol>
 
@@ -101,11 +101,11 @@ docker run -d --name coali --restart unless-stopped \
   <li>Mises à jour : rechargez la nouvelle image quand elle est annoncée, puis <code>docker restart coali</code>. Vos clés restent dans le volume <code>coali-data</code> — ne le supprimez jamais.</li>
   <li>Ne partagez jamais votre phrase de récupération. L'équipe Coali ne vous la demandera jamais.</li>
 </ul>
-<footer><a href="/">← testnet.coali.app</a> · <a href="https://github.com/ZOOZ-protocol/coali-chain">GitHub</a></footer>
+<footer><a href="/">← testnet.zooz.network</a> · <a href="https://github.com/ZOOZ-protocol/coali-chain">GitHub</a></footer>
 </div>
 <script>
 function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q==='fr'||q==='en')return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
-function setLang(l){document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+function setLang(l){document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.zooz.network;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
 setLang(getLang());
 function cp(el){navigator.clipboard.writeText(el.textContent)}
 function cpPre(b){navigator.clipboard.writeText(b.parentElement.textContent.replace(/^copy/,''));b.textContent='✓';setTimeout(()=>b.textContent='copy',1200)}

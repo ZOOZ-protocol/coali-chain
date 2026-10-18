@@ -5,15 +5,54 @@ import { blake2AsU8a } from "@polkadot/util-crypto";
 import { stringToU8a, u8aConcat, u8aToHex } from "@polkadot/util";
 import { isReservedName } from "../dist/tokens.js";
 
-test("token names: reserved names and look-alikes refused like on chain, real names allowed", () => {
-  for (const [name, symbol] of [
-    ["ZOOZ", "ZOOZ"], ["Tether USD", "USDT"], ["My coin", "z00z"], ["Official Co-ali reward", "RWD"],
-    ["ZΟΟZ", "CLB"], ["Club", "ZООZ"], ["Tether", "USDТ"], ["ＺＯＯＺ", "CLB"], ["ZO\u200BOZ", "CLB"],
-    ["Club\u202E", "CLB"], ["𝐙𝐎𝐎𝐙 fan", "CLB"], ["Zööz", "CLB"], ["Club", "CL B"], ["Club", "CLÉ"], ["Club", ""],
-  ]) assert.equal(isReservedName(name, symbol), true, `${name} / ${symbol}`);
-  for (const [name, symbol] of [["Maison Tel Aviv", "MTA"], ["Club des élèves", "ELV"], ["מועדון תל אביב", "TLV"], ["Club 🎉", "PARTY"], ["Ζωή", "ZOE"]])
-    assert.equal(isReservedName(name, symbol), false, `${name} / ${symbol}`);
-});
+// Same cases as runtime/tests/token_attacks.rs (t01): the SDK must refuse exactly what the chain refuses.
+const REFUSED_NAMES = [
+  ["reserved name", "ZOOZ", "ZOOZ"],
+  ["stablecoin", "Tether USD", "USDT"],
+  ["zeros for O", "My coin", "z00z"],
+  ["punctuation inside", "Official Co-ali reward", "RWD"],
+  ["Greek omicrons", "ZΟΟZ", "CLB"],
+  ["Cyrillic O in symbol", "Club", "ZООZ"],
+  ["Cyrillic T in symbol", "Tether", "USDТ"],
+  ["full width", "ＺＯＯＺ", "CLB"],
+  ["zero-width space", "ZO\u200BOZ", "CLB"],
+  ["right-to-left override", "Club\u202E", "CLB"],
+  ["mathematical bold", "𝐙𝐎𝐎𝐙 fan", "CLB"],
+  ["accented Latin", "Zööz", "CLB"],
+  ["small capitals", "ᴢᴏᴏᴢ", "ZZ1"],
+  ["circled letters", "ⓏⓄⓄⓏ", "ZZ2"],
+  ["double-struck", "ℤ𝕆𝕆ℤ", "ZZ3"],
+  ["Z with stroke", "ƵOOƵ", "ZZ4"],
+  ["Cherokee Z", "ᏃOOᏃ", "ZZ5"],
+  ["modifier letters", "ᶻᵒᵒᶻ", "ZZ6"],
+  ["ordinal indicators", "Zºº Z", "ZZ7"],
+  ["Greek name", "Ζωή", "ZOE"],
+  ["variation selector outside an emoji", "Z\uFE0FOOZ", "ZZ8"],
+  ["name USDT, other symbol", "USDT", "USDTT"],
+  ["name Wrapped BTC", "Wrapped BTC", "WBTCX"],
+  ["name ETH, symbol ETH2", "ETH", "ETH2"],
+  ["SOL as a word", "Sol club", "SOLC"],
+  ["S0L as a word", "Club S0L", "CLB"],
+  ["space in symbol", "Club", "CL B"],
+  ["accent in symbol", "Club", "CLÉ"],
+  ["empty symbol", "Club", ""],
+];
+const ALLOWED_NAMES = [
+  ["plain", "Maison Tel Aviv", "MTA"],
+  ["French accents", "Club des élèves", "ELV"],
+  ["Hebrew", "מועדון תל אביב", "TLV"],
+  ["Hebrew and emoji", "זוז שלום 🎉", "SHALOM"],
+  ["Arabic", "نادي يافا", "JAFFA"],
+  ["emoji", "Club 🎉", "PARTY"],
+  ["emoji with variation selector", "Amour ❤\uFE0F", "LOVE"],
+  ["emoji sequence with joiners", "Famille 👨\u200D👩\u200D👧", "FAM"],
+  ["punctuation and currency", "Café « Le Soleil » – 10 ₪", "CAFE"],
+  ["coin symbols inside longer words", "Solar Dots", "SOLAR"],
+];
+for (const [label, name, symbol] of REFUSED_NAMES)
+  test(`token name refused: ${label} (${name} / ${symbol})`, () => assert.equal(isReservedName(name, symbol), true));
+for (const [label, name, symbol] of ALLOWED_NAMES)
+  test(`token name allowed: ${label} (${name} / ${symbol})`, () => assert.equal(isReservedName(name, symbol), false));
 import {
   canonicalJson,
   contentHash,

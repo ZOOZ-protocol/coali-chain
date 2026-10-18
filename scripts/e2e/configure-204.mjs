@@ -3,14 +3,14 @@
 // gives the watchdog a proxy of the sudo account limited to forced finality changes
 // (ProxyType::FinalityWatchdog), and makes the identity key the only identity attester (the
 // relayer's attester key loses that role; run before the new relayer starts). Idempotent.
-// Usage: node configure-204.mjs <sudo.json> <oracle.json> <watchdog.json> <identity.json> <attester.json> [wss://rpc.testnet.coali.app]
+// Usage: node configure-204.mjs <sudo.json> <oracle.json> <watchdog.json> <identity.json> <attester.json> [wss://rpc.testnet.zooz.network]
 
 import { readFileSync } from "node:fs";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 
-const [sudoPath, oraclePath, watchdogPath, identityPath, attesterPath, ws = "wss://rpc.testnet.coali.app"] = process.argv.slice(2);
+const [sudoPath, oraclePath, watchdogPath, identityPath, attesterPath, ws = "wss://rpc.testnet.zooz.network"] = process.argv.slice(2);
 const address = (p) => JSON.parse(readFileSync(p, "utf8")).ss58Address;
 await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(ws), noInitWarn: true });

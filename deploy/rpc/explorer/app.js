@@ -1,6 +1,6 @@
 // Coaliscan: single-page explorer on top of the scan API (/api/*).
 const API = location.hostname === "localhost" ? "http://localhost:8091/api" : "/api";
-const APPS = "https://apps.testnet.coali.app/?rpc=wss://rpc.testnet.coali.app";
+const APPS = "https://apps.testnet.zooz.network/?rpc=wss://rpc.testnet.zooz.network";
 let DEC = 9, SYM = "ZOOZ", PRICE = 0, LABELS = {}, STATS = null, statsAt = 0, timer = null;
 let TK = {}, tkAt = 0;
 
@@ -15,7 +15,7 @@ function getLang() {
 let L = getLang();
 function setLang(l) {
   L = l;
-  document.cookie = `lang=${l};domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax`;
+  document.cookie = `lang=${l};domain=.testnet.zooz.network;path=/;max-age=31536000;samesite=lax`;
   document.cookie = `lang=${l};path=/;max-age=31536000;samesite=lax`;
   route();
 }
@@ -337,7 +337,7 @@ function chrome() {
   document.getElementById("hsearch").style.visibility = location.pathname === "/" ? "hidden" : "visible";
   document.getElementById("foot").innerHTML =
     `<span>Coaliscan · ${t("Powered by", "Propulsé par")} Coalichain</span>` +
-    `<a href="https://testnet.coali.app">${t("Testnet", "Testnet")}</a><a href="https://faucet.testnet.coali.app">Faucet</a>` +
+    `<a href="https://testnet.zooz.network">${t("Testnet", "Testnet")}</a><a href="https://faucet.testnet.zooz.network">Faucet</a>` +
     `<a href="${APPS}#/explorer" target="_blank">${t("Developer tools", "Outils développeurs")}</a>` +
     `<a href="https://github.com/ZOOZ-protocol/coali-chain" target="_blank">GitHub</a>` +
     `<span class="grow">${t("Testnet — tokens have no value.", "Testnet — les jetons n'ont aucune valeur.")}</span>`;
@@ -770,7 +770,7 @@ async function validatorsPage() {
   const accts = await Promise.all(s.validators.map((v) => get(`/account/${v}?limit=1`)));
   app().innerHTML = `${title(t("Validators", "Validateurs"), `${s.validators.length} ${t("active", "actifs")}`)}
   <div class="note">${t(`Validators are chosen each session by <b>Proof of Trust</b>: founders, then identity-verified people with at least ${s.minTrust} trust(s), the most trusted first. No staking. Each block pays a reward from the Fuel reserve plus ${s.economy.split.author}% of the fees. A validator that stops producing blocks is set aside automatically.`, `Les validateurs sont choisis à chaque session par <b>Proof of Trust</b> : les fondateurs, puis les personnes vérifiées ayant au moins ${s.minTrust} trust(s), les plus soutenues en premier. Pas de staking. Chaque bloc rapporte une récompense de la réserve Fuel plus ${s.economy.split.author} % des frais. Un validateur qui ne produit plus de blocs est mis de côté automatiquement.`)}
-  <a href="https://testnet.coali.app/run-a-validator">${t("Become a validator →", "Devenir validateur →")}</a></div>
+  <a href="https://testnet.zooz.network/run-a-validator">${t("Become a validator →", "Devenir validateur →")}</a></div>
   <div class="card scroll"><table><thead><tr><th>${t("Validator", "Validateur")}</th><th>${t("Role", "Rôle")}</th><th>${t("Trusts received", "Trusts reçus")}</th><th>${t("Blocks produced", "Blocs produits")}</th><th>${t("Balance", "Solde")}</th></tr></thead><tbody>
   ${accts.map((a) => `<tr><td>${addr(a.address, 10)}</td><td>${a.founder ? `<span class="tag acc">${t("Founder", "Fondateur")}</span>` : `<span class="tag ok">${t("Trusted", "Par confiance")}</span>`} ${a.offline ? `<span class="tag warn">${t("Offline", "Hors ligne")}</span>` : ""}</td><td>${num(a.trustReceived)}</td><td>${num(a.produced)}</td><td>${amount(a.free, 2)}</td></tr>`).join("")}
   </tbody></table></div>`;

@@ -5,7 +5,7 @@
 // (a restart does not reset them), and the client IP is the one the reverse proxy saw.
 // Env: CHAIN_WS, FAUCET_URI (secret of a funded account), DRIP_AMOUNT (whole tokens, default 100),
 // IP_LIMIT (default 5), POW_BITS (default 18), STATE_FILE (default /data/faucet-state.json),
-// EXPLORER_URL (default https://explorer.testnet.coali.app), PORT.
+// EXPLORER_URL (default https://explorer.testnet.zooz.network), PORT.
 
 import http from "node:http";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -20,7 +20,7 @@ const PORT = Number(process.env.PORT ?? 8080);
 const DAY = 24 * 3600 * 1000;
 const IP_LIMIT = Number(process.env.IP_LIMIT ?? 5);
 const DRIP = Number(process.env.DRIP_AMOUNT ?? 100);
-const EXPLORER = process.env.EXPLORER_URL ?? "https://explorer.testnet.coali.app";
+const EXPLORER = process.env.EXPLORER_URL ?? "https://explorer.testnet.zooz.network";
 const POW_BITS = Number(process.env.POW_BITS ?? 18);
 const STATE_FILE = process.env.STATE_FILE ?? "/data/faucet-state.json";
 const CHALLENGE_TTL = 10 * 60 * 1000;
@@ -155,7 +155,7 @@ input{width:100%;padding:13px 14px;font-size:15px;border-radius:10px;border:1px 
 .small{font-size:13px;color:var(--muted)}
 html[lang=en] [data-l=fr],html[lang=fr] [data-l=en]{display:none!important}
 </style></head><body><main>
-<div class="top"><a class="logo" href="https://testnet.coali.app">Coali<span>chain</span> testnet</a>
+<div class="top"><a class="logo" href="https://testnet.zooz.network">Coali<span>chain</span> testnet</a>
 <div class="lang"><button id="b-en" onclick="setLang('en')">EN</button> <button id="b-fr" onclick="setLang('fr')">FR</button></div></div>
 <div class="card">
 <h1 data-l="en">Get test ZOOZ</h1><h1 data-l="fr">Recevez des ZOOZ de test</h1>
@@ -166,12 +166,12 @@ html[lang=en] [data-l=fr],html[lang=fr] [data-l=en]{display:none!important}
 <button id="b" onclick="go()"><span data-l="en">Send me ${DRIP} ${symbol}</span><span data-l="fr">Envoyez-moi ${DRIP} ${symbol}</span></button>
 <div id="out"></div>
 </div>
-<p class="small" data-l="en">No wallet yet? See step 1 of the <a href="https://testnet.coali.app">tester guide</a>.</p>
-<p class="small" data-l="fr">Pas encore de portefeuille ? Voir l'étape 1 du <a href="https://testnet.coali.app">guide</a>.</p>
+<p class="small" data-l="en">No wallet yet? See step 1 of the <a href="https://testnet.zooz.network">tester guide</a>.</p>
+<p class="small" data-l="fr">Pas encore de portefeuille ? Voir l'étape 1 du <a href="https://testnet.zooz.network">guide</a>.</p>
 </main>
 <script>
 function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q)return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
-function setLang(l){L=l;document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
+function setLang(l){L=l;document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.zooz.network;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
 let L;setLang(getLang()==='fr'?'fr':'en');
 const T={en:{checking:'Checking your browser (a few seconds)…',sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See your account and its history in the explorer',acct:'Network error, please retry.'},
 fr:{checking:'Vérification de votre navigateur (quelques secondes)…',sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir votre compte et son historique dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};

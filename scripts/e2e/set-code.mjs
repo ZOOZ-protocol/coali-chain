@@ -1,5 +1,5 @@
 // Live runtime upgrade with the sudo key. Refuses to run unless the new spec_version is higher.
-// Usage: node set-code.mjs <runtime.compact.compressed.wasm> <sudo.json> <expected-spec> [wss://rpc.testnet.coali.app]
+// Usage: node set-code.mjs <runtime.compact.compressed.wasm> <sudo.json> <expected-spec> [wss://rpc.testnet.zooz.network]
 
 import { readFileSync } from "node:fs";
 import { ApiPromise, WsProvider } from "@polkadot/api";
@@ -7,7 +7,7 @@ import { Keyring } from "@polkadot/keyring";
 import { u8aToHex } from "@polkadot/util";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 
-const [wasmPath, sudoPath, expected, ws = "wss://rpc.testnet.coali.app"] = process.argv.slice(2);
+const [wasmPath, sudoPath, expected, ws = "wss://rpc.testnet.zooz.network"] = process.argv.slice(2);
 await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(ws), noInitWarn: true });
 const sudo = new Keyring({ type: "sr25519" }).addFromUri(JSON.parse(readFileSync(sudoPath, "utf8")).secretPhrase);

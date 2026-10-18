@@ -7,12 +7,12 @@ Chain facts (live testnet):
 | | |
 |---|---|
 | Name | Coalichain Testnet (`system.chain`: "Coali Testnet") |
-| RPC | `wss://rpc.testnet.coali.app` |
+| RPC | `wss://rpc.testnet.zooz.network` |
 | Genesis hash | `0x0527b99c64711d4fe780b92a1b829ae3cae815906d58b0b16bf03abc125a78f2` |
 | SS58 prefix | 42 |
 | Native token | ZOOZ, 9 decimals (no market price: testnet) |
-| Explorer | https://explorer.testnet.coali.app |
-| Faucet | https://faucet.testnet.coali.app |
+| Explorer | https://explorer.testnet.zooz.network |
+| Faucet | https://faucet.testnet.zooz.network |
 | Tokens | `pallet-assets` (index 12), ids from 1; NFTs `pallet-nfts` (index 13) |
 | Logo | https://zooz.network/zooz-coin-256.png |
 | Website | https://zooz.network · Code: https://github.com/ZOOZ-protocol/coali-chain |
@@ -33,9 +33,9 @@ Fork https://github.com/TalismanSociety/chaindata, then:
   nativeCurrency:
     logo: ./assets/tokens/zooz.png
   blockExplorerUrls:
-    - https://explorer.testnet.coali.app/
+    - https://explorer.testnet.zooz.network/
   rpcs:
-    - wss://rpc.testnet.coali.app
+    - wss://rpc.testnet.zooz.network
 ```
 
 3. `pnpm install && pnpm validate`, open the PR:
@@ -43,7 +43,7 @@ Fork https://github.com/TalismanSociety/chaindata, then:
 > **Add Coalichain Testnet**
 >
 > Coalichain is a standalone Substrate chain (Proof of Trust) run by the ZOOZ Protocol foundation. It records votes and trust links for civic apps (Popolitica, Coali) and lets anyone create tokens and NFT collections (`pallet-assets`, `pallet-nfts`).
-> Testnet only, native token ZOOZ (9 decimals, no market value). Explorer: https://explorer.testnet.coali.app · Website: https://zooz.network · Code: https://github.com/ZOOZ-protocol/coali-chain
+> Testnet only, native token ZOOZ (9 decimals, no market value). Explorer: https://explorer.testnet.zooz.network · Website: https://zooz.network · Code: https://github.com/ZOOZ-protocol/coali-chain
 
 ## SubWallet: issue on Koniverse/SubWallet-ChainList
 
@@ -55,13 +55,13 @@ New issue at https://github.com/Koniverse/SubWallet-ChainList/issues:
 >
 > - Type: Substrate standalone chain (not a parachain), Aura + GRANDPA, Proof of Trust consensus on top
 > - Name: Coalichain Testnet · slug suggestion: `coalichain_testnet`
-> - RPC: wss://rpc.testnet.coali.app
+> - RPC: wss://rpc.testnet.zooz.network
 > - Genesis hash: 0x0527b99c64711d4fe780b92a1b829ae3cae815906d58b0b16bf03abc125a78f2
 > - Address prefix (SS58): 42
 > - Native token: ZOOZ, 9 decimals, testnet (no price id)
 > - Local tokens: `pallet-assets` (asset ids from 1), NFTs: `pallet-nfts`
-> - Explorer: https://explorer.testnet.coali.app (account page: `/account/{address}`, extrinsic: `/tx/{block}-{index}`)
-> - Faucet: https://faucet.testnet.coali.app
+> - Explorer: https://explorer.testnet.zooz.network (account page: `/account/{address}`, extrinsic: `/tx/{block}-{index}`)
+> - Faucet: https://faucet.testnet.zooz.network
 > - Logo: https://zooz.network/zooz-coin-256.png
 > - Website: https://zooz.network · GitHub: https://github.com/ZOOZ-protocol/coali-chain · Contact: admin@zooz.network
 >

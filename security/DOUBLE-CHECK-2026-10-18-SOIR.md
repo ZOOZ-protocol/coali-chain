@@ -119,3 +119,71 @@ déménagement vers zooz.network).
 
 Tests : runtime 32 + 11 + 8 + 2 + 1, ledger 26, proof-of-trust 17, économie 14, allowlist 7 ; SDK 9 ;
 montée 204 → 205 locale puis `scripts/e2e/tokens-205.mjs` 17/17.
+
+### TOK-05, second tour (18/10, 22 h) — prêt
+
+La table de sosies est remplacée par une **liste blanche d'écritures** pour les noms de tokens
+(`name_char` dans `runtime/src/configs/mod.rs`, même règle dans `isReservedName` du SDK) :
+ASCII ; latin accentué U+00C0–U+017F ramené au latin ; hébreu U+0590–05FF ; arabe U+0600–06FF
+(sauf les caractères de format U+0600–0605, U+061C, U+06DD) ; ponctuation U+00A0–00BF (sauf
+ª º ¹ ² ³ µ et le trait d'union conditionnel), U+2010–2027, U+2030–205E ; symboles monétaires
+U+20A0–20C0 ; emojis U+2600–27BF et U+1F300–1FAFF, avec U+FE0F et U+200D acceptés seulement
+juste après un emoji. **Tout le reste est refusé.** Les symboles restent limités à 1–12 lettres
+latines ou chiffres. En plus des mots contenus (ZOOZ, COALI, TETHER…), USDT, USDC, BUSD, DAI, BTC,
+WBTC, ETH, WETH, BNB, DOT, KSM, SOL, XRP, ZOOZ, COALI et TRUVOT sont interdits comme **mots entiers**
+du nom (0 lu O, 1 lu I : « S0L » compte).
+
+Vérifié : `security/simulations/token_lookalikes_v2.rs` ajouté aux tests → les 9 attaques
+REFUSED (ᴢᴏᴏᴢ, ⓏⓄⓄⓏ, ℤ𝕆𝕆ℤ, ƵOOƵ, ᏃOOᏃ, ᶻᵒᵒᶻ, USDT / USDTT, Wrapped BTC / WBTCX, ETH / ETH2), « זוז שלום 🎉 »
+ACCEPTED. `runtime/tests/token_attacks.rs` t01 : 29 noms refusés, 9 acceptés (hébreu, arabe,
+accents, « ❤️ », famille avec ZWJ, « Café « Le Soleil » – 10 ₪ », « Solar Dots »). SDK : un test
+par variante, mêmes 38 cas (`sdk/test/unit.test.mjs`, 47 tests). Wasm 205 reconstruit (blake2-256
+`0c5f6ef5e25d0aa6edafee03d84776c959ecbcdc39a6723302e00264408aa798`, build local non reproductible),
+montée 204 → 205 locale + `tokens-205.mjs` : OK.
+
+### Déménagement vers testnet.zooz.network (18/10, 22 h) — en ligne
+
+`DOMAIN=testnet.zooz.network` sur le serveur RPC ; certificats Let's Encrypt obtenus pour les 5
+noms ; anciens noms `*.testnet.coali.app` en redirection 301 (le RPC ancien reste servi, avec les
+mêmes protections d'en-têtes) ; bootnodes du chain spec en `vN.testnet.zooz.network` (genesis
+inchangé `0x0527…78f2`), copié sur les 4 validateurs. CSP : `connect-src` vers `rpc.testnet.zooz.network`.
+
+## Double check des corrections du soir (auditeurs, 21 h 50)
+
+Commits vérifiés : `f4ad471` (coali-chain) et `2f63b02` (zooz-network).
+
+| Point | Résultat |
+|---|---|
+| Tests | 118 tests Rust + 9 tests SDK verts, aucun avertissement de compilation |
+| RPC-01 | ✅ Corrigé, vérifié en ligne (`security/simulations/rpc-ratelimit-bypass-v2.mjs`) : 6 variantes d'en-têtes falsifiés (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`, vers `172.17.0.1` et vers les adresses internes `10.77.0.11` à `13`) sont toutes limitées comme un visiteur normal |
+| WEB-04, WEB-05 | ✅ CSP sans `{args[0]}` ; `/Caddyfile` et `*.service` en 404 sur les trois sites |
+| APP-01 | ✅ Date et statut imposés par la base ; limite par visiteur via `cf-connecting-ip` (posé par Cloudflare, non falsifiable par le client) |
+| TOK-06, 07, 08 | ✅ Textes honnêtes sur les tokens réglementés, avertissement rouge, offres non vérifiées regroupées avec « Tout ignorer » |
+| CI, `SECURITY.md`, modèle de menace, `storage_version` | ✅ Présents et sérieux (clippy en erreur, cargo audit/deny, npm audit, srtool) |
+| **TOK-05** | ❌ **Encore contournable** (voir ci-dessous) |
+
+### TOK-05 (suite) — Moyenne — La table de sosies a des trous
+Test `security/simulations/token_lookalikes_v2.rs` (module à ajouter à `runtime/tests/token_attacks.rs`).
+Acceptés aujourd'hui, et affichés comme « ZOOZ » :
+
+| Variante | Exemple |
+|---|---|
+| Petites capitales | `ᴢᴏᴏᴢ` |
+| Lettres entourées | `ⓏⓄⓄⓏ` |
+| Z double barre (bloc « letterlike ») | `ℤ𝕆𝕆ℤ` |
+| Z barré | `ƵOOƵ` |
+| Cherokee | `ᏃOOᏃ` |
+| Lettres en exposant | `ᶻᵒᵒᶻ` |
+
+Les grandes cryptos ne sont réservées que comme **symboles** : un token peut s'appeler `USDT`,
+`ETH` ou `Wrapped BTC` avec un autre symbole (`USDTT`, `ETH2`, `WBTCX`), alors que c'est le nom que
+les wallets affichent en premier.
+
+Correctif recommandé (robuste, au lieu d'une liste de sosies forcément incomplète) :
+1. **Liste blanche d'alphabets pour les noms** : ASCII, lettres latines accentuées (Latin-1 et
+   Latin étendu-A, déjà ramenées au latin), hébreu (U+0590–05FF), arabe (U+0600–06FF), ponctuation
+   générale et emojis (U+1F300–1FAFF, U+2600–27BF). Tout autre caractère est refusé.
+   `זוז שלום 🎉` reste accepté ; toutes les variantes ci-dessus deviennent impossibles.
+2. Ajouter aux **mots réservés du nom** les tickers USDT, USDC, BUSD, BTC, WBTC, ETH, WETH, BNB, DOT,
+   KSM, SOL, XRP, en mots entiers (pour ne pas bloquer « Bethléem » à cause de ETH).
+3. Même règle dans le SDK (`isReservedName`), et un test pour chaque variante du tableau.

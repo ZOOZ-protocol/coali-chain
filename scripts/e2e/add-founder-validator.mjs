@@ -3,7 +3,7 @@
 //   1. the sudo account funds the validator account (fees, 10 ZOOZ);
 //   2. the validator account sets its session keys, with the proof of possession of both keys;
 //   3. sudo adds it to the founders. It joins the validator set at a following session change.
-// Usage: node add-founder-validator.mjs <sudo.json> <validator phrase file> [wss://rpc.testnet.coali.app]
+// Usage: node add-founder-validator.mjs <sudo.json> <validator phrase file> [wss://rpc.testnet.zooz.network]
 
 import { readFileSync } from "node:fs";
 import { ApiPromise, WsProvider } from "@polkadot/api";
@@ -11,7 +11,7 @@ import { Keyring } from "@polkadot/keyring";
 import { u8aConcat, u8aToHex, stringToU8a } from "@polkadot/util";
 import { cryptoWaitReady, decodeAddress } from "@polkadot/util-crypto";
 
-const [sudoPath, phrasePath, ws = "wss://rpc.testnet.coali.app"] = process.argv.slice(2);
+const [sudoPath, phrasePath, ws = "wss://rpc.testnet.zooz.network"] = process.argv.slice(2);
 await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(ws), noInitWarn: true });
 const sudo = new Keyring({ type: "sr25519" }).addFromUri(JSON.parse(readFileSync(sudoPath, "utf8")).secretPhrase);

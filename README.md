@@ -4,11 +4,11 @@
 
 Coalichain is the blockchain of the [ZOOZ Protocol](https://github.com/ZOOZ-protocol). It records the votes, trusts and results of the Coali and Popolitica apps as verifiable proofs, and its validators are chosen by **Proof of Trust**: no staking, no mining — identity-verified people who receive public trust from the community.
 
-- Testnet: <https://testnet.coali.app>
-- RPC: `wss://rpc.testnet.coali.app`
-- Explorer: <https://explorer.testnet.coali.app>
-- Faucet (test ZOOZ): <https://faucet.testnet.coali.app>
-- Run a validator: <https://testnet.coali.app/run-a-validator>
+- Testnet: <https://testnet.zooz.network>
+- RPC: `wss://rpc.testnet.zooz.network`
+- Explorer: <https://explorer.testnet.zooz.network>
+- Faucet (test ZOOZ): <https://faucet.testnet.zooz.network>
+- Run a validator: <https://testnet.zooz.network/run-a-validator>
 
 - SDK (TypeScript): [`sdk/`](sdk/README.md)
 
