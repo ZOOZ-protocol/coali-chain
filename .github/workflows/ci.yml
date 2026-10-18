@@ -63,7 +63,8 @@ jobs:
       - name: Errors as annotations
         if: failure()
         shell: bash
-        run: grep -E "^(error|warning: build failed)" -A12 build.log | head -80 | sed 's/^/::error::/'
+        run: |
+          grep -E "^error" -A12 build.log | head -80 | sed 's/^/::error::/'
 
   dependencies:
     name: Rust dependencies (cargo audit, cargo deny)
