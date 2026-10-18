@@ -50,7 +50,10 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: actions/checkout@v4
       - name: System dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler clang libclang-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler clang libclang-dev
+          # RocksDB's bindings look for libclang; tell them where apt put it.
+          echo "LIBCLANG_PATH=$(dirname "$(find /usr/lib -name 'libclang*.so*' | head -1)")" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rust-src
