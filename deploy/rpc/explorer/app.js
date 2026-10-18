@@ -73,7 +73,14 @@ function ago(ts) {
 }
 const date = (ts) => (ts ? new Date(ts).toLocaleString(L === "fr" ? "fr-FR" : "en-US", { dateStyle: "medium", timeStyle: "medium" }) : "—");
 const short = (a, n = 6) => (a && a.length > 2 * n + 3 ? `${a.slice(0, n)}…${a.slice(-n)}` : a ?? "");
-const copyBtn = (v) => `<span class="copy" title="Copy" onclick="navigator.clipboard.writeText('${esc(v)}');this.textContent='✓'">⧉</span>`;
+// Copied value in a data attribute, handled by one listener (no inline script).
+const copyBtn = (v) => `<span class="copy" title="Copy" data-copy="${esc(v)}">⧉</span>`;
+document.addEventListener("click", (e) => {
+  const el = e.target.closest?.("[data-copy]");
+  if (!el) return;
+  navigator.clipboard.writeText(el.dataset.copy);
+  el.textContent = "✓";
+});
 const help = (s) => `<span class="q" title="${esc(s)}">?</span>`;
 function addr(a, n = 6, full = false) {
   if (!a) return "—";
@@ -157,6 +164,18 @@ function eventLabel(e, me) {
       return `📄 ${t("Text of decision", "Texte de la décision")} ${decLink(d.decisionId)} ${t("published", "publié")}`;
     case "coaliLedger.TotalsPublished":
       return `🔢 ${t("Vote totals of", "Totaux des votes de")} ${decLink(d.decisionId)} ${t("published", "publiés")}`;
+    case "coaliLedger.DecisionRulesSet":
+      return `👥 ${t("Eligible voters declared for", "Électeurs éligibles déclarés pour")} ${decLink(d.decisionId)} : <b>${num(d.maxVoters)}</b>`;
+    case "coaliLedger.ResultRecounted":
+      return `${d.matches ? "✓" : "✕"} ${t("Votes of", "Votes de")} ${decLink(d.decisionId)} ${t("opened and recounted by the chain", "ouverts et recomptés par la chaîne")} (${num(d.votes)}) : ${d.matches ? t("same result", "même résultat") : t("DIFFERENT result", "résultat DIFFÉRENT")}`;
+    case "coaliLedger.ElectorateSet":
+      return `👥 ${t("Electorate of", "Électorat de")} ${addr(d.app)} : <b>${num(d.voters)}</b> ${t("eligible voters", "électeurs éligibles")}`;
+    case "coaliLedger.SnapshotChecked":
+      return `✓ ${t("Totals checked by the chain against", "Totaux vérifiés par la chaîne contre")} ${num(d.voteCount)} ${t("votes of", "votes de")} ${decLink(d.decisionId)}`;
+    case "proofOfTrust.ValidatorStruck":
+      return `⚠️ ${addr(d.validator)} ${t("missed blocks", "a manqué des blocs")} (${t("strike", "avertissement")} ${esc(d.strikes)})`;
+    case "proofOfTrust.ValidatorEquivocated":
+      return `⛔ ${addr(d.validator)} ${t("signed two conflicting votes and was removed", "a signé deux votes contradictoires et a été retiré")}`;
     case "coaliLedger.AttesterAdded":
       return `${t("App approved", "App approuvée")} ${addr(d.who)}`;
     case "coaliLedger.AttesterRemoved":
@@ -262,7 +281,7 @@ function explain(x) {
         break;
       case "coaliLedger.SnapshotPublished":
         out.push(`<p class="lead">📊 ${d.isFinal ? t("The final results of", "Les résultats définitifs de") : t("Interim results of", "Des résultats intermédiaires de")} ${decLink(d.decisionId, 8)} ${t("were anchored on the chain", "ont été ancrés sur la chaîne")} <span class="muted">(${t("snapshot", "instantané")} #${esc(d.seq)})</span>.</p>
-          <p>${t("The Merkle root", "La racine de Merkle")} <span class="mono sm">${esc(short(d.merkleRoot, 10))}</span> ${t("is a single fingerprint of the full list of votes. Anyone with the list can recompute it and check that no vote was added, removed or changed.", "est une empreinte unique de la liste complète des votes. Toute personne qui a la liste peut la recalculer et vérifier qu'aucun vote n'a été ajouté, retiré ou modifié.")}</p>`);
+          <p>${t("The Merkle root", "La racine de Merkle")} <span class="mono sm">${esc(short(d.merkleRoot, 10))}</span> ${t("is a single fingerprint of the full list of votes recorded on the chain. Anyone can rebuild it from those votes and check that no vote was added, removed or changed afterwards.", "est une empreinte unique de la liste complète des votes enregistrés sur la chaîne. Chacun peut la reconstruire à partir de ces votes et vérifier qu'aucun vote n'a été ajouté, retiré ou modifié après coup.")}</p>`);
         break;
       case "coaliLedger.ContentPublished":
         out.push(`<p class="lead">📄 ${t("The text of decision", "Le texte de la décision")} ${decLink(d.decisionId, 8)} ${t("was published on the chain.", "a été publié sur la chaîne.")}</p>
@@ -326,7 +345,7 @@ async function home() {
   document.getElementById("hero").innerHTML = `<div class="hero"><div class="wrap">
     <h1>${t("The Coalichain Explorer", "L'explorateur Coalichain")}</h1>
     <form onsubmit="return doSearch(event, 'q')"><input id="q" autocomplete="off" spellcheck="false" placeholder="${t("Search by Address / Txn Hash / Block / Decision", "Rechercher une adresse / un hash de transaction / un bloc / une décision")}"><button>${t("Search", "Rechercher")}</button></form>
-    <p>${t("Every vote, trust and decision of Coali apps, verifiable by anyone.", "Chaque vote, trust et décision des apps Coali, vérifiable par tous.")} <a href="/votes">${t("See the votes →", "Voir les votes →")}</a></p>
+    <p>${t("Every vote, trust and decision of Coali apps, recorded so that nobody can change them afterwards.", "Chaque vote, trust et décision des apps Coali, enregistré pour que personne ne puisse le modifier après coup.")} <a href="/votes">${t("See the votes →", "Voir les votes →")}</a></p>
   </div></div>`;
   const render = async () => {
     const [s, blocks, txs] = await Promise.all([stats(true), get("/blocks?limit=6"), get("/txs?limit=6")]);
@@ -498,17 +517,29 @@ async function decisionPage(id) {
       const label = opts.find((o) => o.id === id)?.text ?? id;
       return `<div class="res"><div class="res-l"><span dir="auto">${esc(label)}</span><span><b>${num(n)}</b> <span class="muted">(${pct}%)</span></span></div><div class="res-bar"><i style="width:${pct}%"></i></div></div>`;
     });
-    resultsCard = `<div class="card" style="margin-bottom:18px"><div class="card-h"><span>${t("Results published on the chain", "Résultats publiés sur la chaîne")}</span><span class="tag ok" title="${esc(t("The chain accepted these totals only because they match the fingerprint of the results anchored with the votes.", "La chaîne n'a accepté ces totaux que parce qu'ils correspondent à l'empreinte des résultats ancrée avec les votes."))}">✓ ${t("Verified by the chain", "Vérifié par la chaîne")}</span></div>
+    // Runtime 204+: the chain itself checked that the totals add up to the votes it recorded.
+    // Earlier results only match the fingerprint the app published.
+    const recount = latest.isFinal && d.recount
+      ? d.recount.matches
+        ? `<span class="tag ok" title="${esc(t("After closing, every vote was opened (choice and secret) and the chain counted them itself: same result, option by option.", "Après la clôture, chaque vote a été ouvert (choix et secret) et la chaîne les a comptés elle-même : même résultat, option par option."))}">✓ ${t("Recounted by the chain", "Recompté par la chaîne")}</span> `
+        : `<span class="tag bad" title="${esc(t("The chain's own count of the opened votes differs from these totals.", "Le décompte de la chaîne sur les votes ouverts diffère de ces totaux."))}">✕ ${t("Differs from the chain's recount", "Diffère du recomptage de la chaîne")}</span> `
+      : "";
+    const badge = recount + (latest.checked
+      ? `<span class="tag ok" title="${esc(t("The chain accepted these totals only because they add up to the votes it recorded for this decision.", "La chaîne n'a accepté ces totaux que parce qu'ils correspondent au nombre de votes qu'elle a enregistrés pour cette décision."))}">✓ ${t(`Matches the ${num(latest.checked.voteCount)} votes on the chain`, `Correspond aux ${num(latest.checked.voteCount)} votes de la chaîne`)}</span>`
+      : `<span class="tag" title="${esc(t("Published before runtime 204: these totals match the fingerprint the app published with the snapshot.", "Publiés avant le runtime 204 : ces totaux correspondent à l'empreinte publiée par l'app avec l'instantané."))}">${t("Matches the fingerprint published by the app", "Correspond à l'empreinte publiée par l'app")}</span>`);
+    resultsCard = `<div class="card" style="margin-bottom:18px"><div class="card-h"><span>${t("Results published on the chain", "Résultats publiés sur la chaîne")}</span>${badge}</div>
     <div style="padding:16px">${rows.join("")}<div class="muted sm" style="margin-top:10px">${num(total)} ${t("votes", "votes")} · ${t("snapshot", "instantané")} #${latest.seq} · ${latest.isFinal ? t("final", "définitif") : t("interim", "intermédiaire")} · ${t("block", "bloc")} ${blk(latest.publishedAt)}</div></div></div>`;
   }
   const question = d.content?.question
     ? `<div class="card" style="margin-bottom:18px"><div class="card-h"><span dir="auto">❓ ${esc(d.content.question)}</span><span class="tag ok" title="${esc(t("This text matches, letter for letter, the fingerprint recorded when the vote opened.", "Ce texte correspond, lettre pour lettre, à l'empreinte enregistrée à l'ouverture du vote."))}">✓ ${t("Original text", "Texte d'origine")}</span></div></div>`
-    : `<div class="note">${t("The text of the decision stays in the app (Popolitica, Coali…). The chain keeps its fingerprint, every anonymous vote and the results, so anyone can check that nothing was changed.", "Le texte de la décision reste dans l'app (Popolitica, Coali…). La chaîne garde son empreinte, chaque vote anonyme et les résultats, pour que chacun puisse vérifier que rien n'a été modifié.")}</div>`;
+    : `<div class="note">${t("The text of this decision is not published yet. The chain keeps its fingerprint, every anonymous vote and the results, so that nothing can be changed afterwards.", "Le texte de cette décision n'est pas encore publié. La chaîne garde son empreinte, chaque vote anonyme et les résultats, pour que rien ne puisse être modifié après coup.")}</div>`;
   app().innerHTML = `${title(t("Decision", "Décision"), `<span class="mono">${esc(d.id)}</span> ${copyBtn(d.id)} ${d.closed || fin ? `<span class="tag">${t("Closed", "Clôturée")}</span>` : `<span class="tag ok">${t("Open to votes", "Vote ouvert")}</span>`}`)}
   ${question}
   ${resultsCard}
   <div class="card kv">
-    ${kvRow(t("Votes recorded", "Votes enregistrés"), `<b>${num(d.votes)}</b>`)}
+    ${kvRow(t("Votes recorded", "Votes enregistrés"), `<b>${num(d.votes)}</b>${d.maxVoters !== null ? ` <span class="muted">/ ${num(d.maxVoters)} ${t("eligible voters declared by the app", "électeurs éligibles déclarés par l'app")}</span>` : ""}`, t("Votes are signed with keys the app holds for its users; the chain refuses more votes than the electorate the app declared publicly.", "Les votes sont signés avec des clés que l'app détient pour ses utilisateurs ; la chaîne refuse plus de votes que l'électorat déclaré publiquement par l'app."))}
+    ${d.endsAt ? kvRow(t("Voting ends", "Fin du vote"), `🕒 ${date(d.endsAt)}`, t("The chain refuses final results before this time", "La chaîne refuse des résultats définitifs avant cette date")) : ""}
+    ${d.voteLog ? kvRow(t("Vote log", "Journal des votes"), `<span class="mono sm">${esc(d.voteLog)}</span>`, t("Running fingerprint of every vote, in order, computed by the chain itself", "Empreinte cumulée de chaque vote, dans l'ordre, calculée par la chaîne elle-même")) : ""}
     ${kvRow(t("Results", "Résultats"), fin ? `<span class="tag ok">${t("Final results anchored", "Résultats définitifs ancrés")}</span> ${t("block", "bloc")} ${blk(fin.n)}` : snaps.length ? `${snaps.length} ${t("interim snapshot(s)", "instantané(s) intermédiaire(s)")}` : t("Not published yet", "Pas encore publiés"))}
     ${kvRow(t("Registered", "Enregistrée"), `${t("block", "bloc")} ${blk(d.registeredAt)} ${reg ? `<span class="muted">(${ago(reg.ts)})</span>` : ""} ${t("by", "par")} ${addr(d.registeredBy)}`)}
     ${kvRow(t("Category", "Catégorie"), `#${d.category}`)}
@@ -578,7 +609,7 @@ async function votesPage(p) {
     votes: t("Each line is one vote. The voter uses an address created for this vote only, and the choice is sealed 🔒: nobody can see who voted or what, but everyone can check that the vote exists and was counted. Click a decision to see all its votes and results.", "Chaque ligne est un vote. Le votant utilise une adresse créée pour ce seul vote, et le choix est scellé 🔒 : personne ne voit qui a voté ni quoi, mais tout le monde peut vérifier que le vote existe et a été compté. Cliquez sur une décision pour voir tous ses votes et ses résultats."),
     trusts: t("Public trusts between people (pseudonymous addresses, no names). Trust decides who represents whom, and who can become a validator: this is Proof of Trust.", "Les trusts publics entre personnes (adresses pseudonymes, sans nom). La confiance décide qui représente qui, et qui peut devenir validateur : c'est le Proof of Trust."),
     decisions: t("Each decision put to a vote is registered with the fingerprint of its text: the question cannot be changed once the vote has started.", "Chaque décision soumise au vote est enregistrée avec l'empreinte de son texte : la question ne peut plus être modifiée une fois le vote lancé."),
-    results: t("Results are anchored as a Merkle root: one fingerprint of the full list of votes. Anyone with the list can recompute it and check that no vote was added or removed.", "Les résultats sont ancrés sous forme de racine de Merkle : une empreinte unique de la liste complète des votes. Toute personne qui a la liste peut la recalculer et vérifier qu'aucun vote n'a été ajouté ou retiré."),
+    results: t("Results are anchored as a Merkle root of the votes recorded on the chain, and since runtime 204 the chain checks that the totals add up to those votes.", "Les résultats sont ancrés sous forme de racine de Merkle des votes enregistrés sur la chaîne, et depuis le runtime 204 la chaîne vérifie que les totaux correspondent à ces votes."),
     identity: t("Identity attestations: an approved app confirms that a real, unique person is behind an address. No personal data is ever written on chain.", "Attestations d'identité : une app approuvée confirme qu'une personne réelle et unique est derrière une adresse. Aucune donnée personnelle n'est jamais écrite sur la chaîne."),
   };
   const heads = {
@@ -674,7 +705,12 @@ async function collectionPage(id, p) {
   const c = await get(`/collection/${encodeURIComponent(id)}${p.before ? "?before=" + p.before : ""}`);
   if (!c) return notFound();
   const evRows = c.events.filter((e) => eventLabel(e));
-  const img = (m) => (m?.image && /^(https?:|ipfs:)/.test(m.image) ? `<img src="${esc(m.image.replace(/^ipfs:\/\//, "https://ipfs.io/ipfs/"))}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;vertical-align:middle;margin-right:8px">` : "");
+  // External images are only loaded on request: loading them would tell their host who visits.
+  const img = (m) =>
+    typeof m?.image === "string" && /^(https:|ipfs:)/.test(m.image)
+      ? `<img data-src="${esc(m.image.replace(/^ipfs:\/\//, "https://ipfs.io/ipfs/"))}" alt="" referrerpolicy="no-referrer" style="width:44px;height:44px;object-fit:cover;border-radius:8px;vertical-align:middle;margin-right:8px;background:var(--bg)">`
+      : "";
+  const hasImages = c.items.some((i) => img(i.metadata));
   app().innerHTML = `${title(`🖼️ ${nftName(c.metadata, t("Collection", "Collection") + " #" + c.id)}`, `<span class="tag">NFT · #${c.id}</span>`)}
   <div class="card kv">
     ${c.metadata?.description ? kvRow(t("Description", "Description"), `<span dir="auto">${esc(c.metadata.description)}</span>`) : ""}
@@ -683,11 +719,16 @@ async function collectionPage(id, p) {
     ${kvRow(t("Created", "Créée"), c.created ? `${t("block", "bloc")} ${blk(c.created.n)} <span class="muted">(${ago(c.created.ts)})</span>` : "—")}
     ${c.metadata && !c.metadata.name ? kvRow(t("Details", "Détails"), `<span class="mono sm">${esc(c.metadata.data)}</span>`) : ""}
   </div>
-  <div class="card scroll" style="margin-top:18px"><div class="card-h">NFT</div>
+  <div class="card scroll" style="margin-top:18px"><div class="card-h"><span>NFT</span>${hasImages ? `<a href="#" id="show-images" class="sm">${t("Show images (loaded from external sites)", "Afficher les images (chargées depuis des sites externes)")}</a>` : ""}</div>
     ${c.items.length ? `<table><thead><tr><th>#</th><th>${t("Name", "Nom")}</th><th>${t("Owner", "Propriétaire")}</th></tr></thead><tbody>
     ${c.items.map((i) => `<tr><td class="muted">${i.id}</td><td>${img(i.metadata)}<span dir="auto">${nftName(i.metadata, "NFT #" + i.id)}</span></td><td>${addr(i.owner)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">${t("No NFT yet.", "Aucun NFT pour l'instant.")}</div>`}</div>
   <div class="card scroll" style="margin-top:18px"><div class="card-h">${t("Activity", "Activité")}</div>
     ${evRows.length ? `<table><tbody>${evRows.map((e) => `<tr><td class="wrap-ok">${eventLabel(e)}</td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td>${e.x >= 0 ? `<a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a>` : ""}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">—</div>`}</div>`;
+  document.getElementById("show-images")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    for (const el of app().querySelectorAll("img[data-src]")) el.src = el.dataset.src;
+    e.target.remove();
+  });
 }
 
 async function validatorsPage() {

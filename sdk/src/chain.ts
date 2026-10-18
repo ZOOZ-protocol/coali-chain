@@ -25,6 +25,16 @@ export interface ChainDecision {
   votes: number;
   /** Clear content ({ question, options }) if published; the chain checked it against `contentHash`. */
   content: unknown | null;
+  /** Runtime 204+: when voting ends (unix ms; the chain refuses final results before), or null. */
+  endsAt: number | null;
+  /** Runtime 204+: eligible voters declared by the app; the chain refuses more votes. Null before 204. */
+  maxVoters: number | null;
+  /**
+   * Runtime 204+: once the decision is closed and every vote opened (choice and salt checked
+   * against its commitment), the chain's own count: `matches` is whether it equals the final
+   * totals, option by option. Null until then.
+   */
+  recount: { matches: boolean; votes: number } | null;
 }
 
 const parseJson = (bytes: Uint8Array): unknown => {
@@ -37,13 +47,16 @@ const parseJson = (bytes: Uint8Array): unknown => {
 
 export async function getDecision(api: ApiPromise, id: string): Promise<ChainDecision | null> {
   const key = decisionId(id);
-  const [info, count, content] = await Promise.all([
+  const [info, count, content, rules, recount] = await Promise.all([
     q(api).decisions(key),
     q(api).voteCount(key),
     q(api).decisionContent?.(key),
+    q(api).decisionRulesOf?.(key),
+    q(api).recountOf?.(key),
   ]);
   if (info.isNone) return null;
   const d = info.unwrap();
+  const r = rules?.isSome ? rules.unwrap() : null;
   return {
     id: key,
     contentHash: d.contentHash.toHex(),
@@ -53,6 +66,9 @@ export async function getDecision(api: ApiPromise, id: string): Promise<ChainDec
     closed: d.closed.isTrue,
     votes: count.toNumber(),
     content: content?.isSome ? parseJson(content.unwrap().toU8a(true)) : null,
+    endsAt: r && r.endsAt.isSome ? r.endsAt.unwrap().toNumber() : null,
+    maxVoters: r ? r.maxVoters.toNumber() : null,
+    recount: recount?.isSome ? { matches: recount.unwrap().matches.isTrue, votes: recount.unwrap().votes.toNumber() } : null,
   };
 }
 
@@ -106,6 +122,11 @@ export interface Snapshot {
   publishedAt: number;
   /** Votes per option id if published in clear; the chain checked them against `totalsHash`. */
   totals: Record<string, number> | null;
+  /**
+   * Runtime 204+: what the chain checked on publication: the totals add up to `voteCount`, the
+   * votes it had recorded, and `voteLog` is its running hash of them. Null for older snapshots.
+   */
+  checked: { voteCount: number; voteLog: Hex | null; merkleVersion: number } | null;
 }
 
 /** A result snapshot of a decision; the latest one if `seq` is omitted. */
@@ -116,9 +137,14 @@ export async function getSnapshot(api: ApiPromise, decision: string, seq?: numbe
     if (latest.isNone) return null;
     seq = latest.unwrap().toNumber() as number;
   }
-  const [s, totals] = await Promise.all([q(api).snapshots(key, seq), q(api).snapshotTotals?.(key, seq)]);
+  const [s, totals, proof] = await Promise.all([
+    q(api).snapshots(key, seq),
+    q(api).snapshotTotals?.(key, seq),
+    q(api).snapshotProofs?.(key, seq),
+  ]);
   if (s.isNone) return null;
   const v = s.unwrap();
+  const p = proof?.isSome ? proof.unwrap() : null;
   return {
     seq,
     merkleRoot: v.merkleRoot.toHex(),
@@ -126,6 +152,9 @@ export async function getSnapshot(api: ApiPromise, decision: string, seq?: numbe
     isFinal: v.isFinal.isTrue,
     publishedAt: v.publishedAt.toNumber(),
     totals: totals?.isSome ? (parseJson(totals.unwrap().toU8a(true)) as Record<string, number>) : null,
+    checked: p
+      ? { voteCount: p.voteCount.toNumber(), voteLog: p.voteLog.isSome ? p.voteLog.unwrap().toHex() : null, merkleVersion: p.merkleVersion.toNumber() }
+      : null,
   };
 }
 
@@ -151,9 +180,13 @@ export async function verifySnapshot(
 ): Promise<SnapshotCheck | null> {
   const snapshot = await getSnapshot(api, decision, opts.seq);
   if (!snapshot) return null;
-  const votes = (await getVotes(api, decision)).filter((v) => v.recordedAt < snapshot.publishedAt);
-  const computedRoot = merkleRoot(votes.map((v) => voteLeaf(v.voterPublicKey, v.commitment)));
-  const out: SnapshotCheck = { match: computedRoot === snapshot.merkleRoot, snapshot, computedRoot, votes };
+  const version = snapshot.checked?.merkleVersion ?? 1;
+  const votes = (await getVotes(api, decision)).filter((v) =>
+    snapshot.checked ? v.recordedAt <= snapshot.publishedAt : v.recordedAt < snapshot.publishedAt,
+  );
+  const computedRoot = merkleRoot(votes.map((v) => voteLeaf(v.voterPublicKey, v.commitment, version)), version);
+  const countOk = !snapshot.checked || snapshot.checked.voteCount === votes.length;
+  const out: SnapshotCheck = { match: computedRoot === snapshot.merkleRoot && countOk, snapshot, computedRoot, votes };
   if (opts.voter) {
     const pk = toHex(api.createType("AccountId", opts.voter).toU8a());
     out.included = votes.some((v) => v.voterPublicKey === pk);

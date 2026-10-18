@@ -1479,8 +1479,11 @@ dependencies = [
  "pallet-balances",
  "pallet-coali-ledger",
  "pallet-grandpa",
+ "pallet-multisig",
  "pallet-nfts",
+ "pallet-offences",
  "pallet-proof-of-trust",
+ "pallet-proxy",
  "pallet-session",
  "pallet-sudo",
  "pallet-timestamp",
@@ -6852,12 +6855,14 @@ dependencies = [
 name = "pallet-coali-ledger"
 version = "0.1.0"
 dependencies = [
+ "frame-benchmarking",
  "frame-support",
  "frame-system",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
  "sp-io",
+ "sp-keystore",
  "sp-runtime",
 ]
 
@@ -6915,6 +6920,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-multisig"
+version = "49.0.0"
+source = "git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-stable2606-3#9d0dc6e8fbb13174663abb4001e369f2a69f357a"
+dependencies = [
+ "log",
+ "parity-scale-codec",
+ "polkadot-sdk-frame",
+ "scale-info",
+]
+
+[[package]]
 name = "pallet-nfts"
 version = "43.0.0"
 source = "git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-stable2606-3#9d0dc6e8fbb13174663abb4001e369f2a69f357a"
@@ -6932,6 +6948,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-offences"
+version = "47.0.0"
+source = "git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-stable2606-3#9d0dc6e8fbb13174663abb4001e369f2a69f357a"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "log",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-runtime",
+ "sp-staking",
+]
+
+[[package]]
 name = "pallet-proof-of-trust"
 version = "0.1.0"
 dependencies = [
@@ -6946,6 +6977,16 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-staking",
+]
+
+[[package]]
+name = "pallet-proxy"
+version = "49.0.0"
+source = "git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-stable2606-3#9d0dc6e8fbb13174663abb4001e369f2a69f357a"
+dependencies = [
+ "parity-scale-codec",
+ "polkadot-sdk-frame",
+ "scale-info",
 ]
 
 [[package]]

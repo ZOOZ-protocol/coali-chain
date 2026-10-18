@@ -69,6 +69,7 @@ fn testnet_genesis(
 		proof_of_trust: ProofOfTrustConfig {
 			founders: initial_authorities.iter().map(|x| x.0.clone()).collect::<Vec<_>>(),
 			min_trust: 1,
+			identity_attesters: vec![root.clone()],
 		},
 		sudo: SudoConfig { key: Some(root.clone()) },
 		coali_ledger: CoaliLedgerConfig { attesters: vec![root] },

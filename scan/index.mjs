@@ -269,7 +269,30 @@ function tokenOf(id, d, m, restricted, fixedSupply) {
   };
 }
 
-async function allTokens() {
+// Whole-chain lists are rebuilt at most every 30 s, whatever the traffic.
+const memo = (fn, ttl) => {
+  let at = 0;
+  let value = null;
+  return () => {
+    if (!value || Date.now() - at > ttl) {
+      at = Date.now();
+      value = fn().catch((e) => {
+        value = null;
+        throw e;
+      });
+    }
+    return value;
+  };
+};
+const allTokens = memo(loadTokens, 30_000);
+const allCollections = memo(loadCollections, 30_000);
+const MAX_LIST = 500;
+const page = (list, p) => {
+  const offset = Math.max(0, Number(p.offset) || 0);
+  return list.slice(offset, offset + Math.min(MAX_LIST, Math.max(1, Number(p.limit) || MAX_LIST)));
+};
+
+async function loadTokens() {
   if (!api.query.assets) return [];
   const [assets, metas, restricted, fixed] = await Promise.all([
     api.query.assets.asset.entries(),
@@ -300,10 +323,11 @@ const nftMeta = (opt) => {
   if (!opt?.isSome) return null;
   const data = utf8(opt.unwrap().data);
   const j = parseJson(data);
-  return { data, name: j?.name ?? null, image: j?.image ?? null, description: j?.description ?? null };
+  const str = (v) => (typeof v === "string" ? v : null);
+  return { data, name: str(j?.name), image: str(j?.image), description: str(j?.description) };
 };
 
-async function allCollections() {
+async function loadCollections() {
   if (!api.query.nfts) return [];
   const [cols, metas] = await Promise.all([api.query.nfts.collection.entries(), api.query.nfts.collectionMetadataOf.entries()]);
   const meta = new Map(metas.map(([k, m]) => [k.args[0].toNumber(), m]));
@@ -316,10 +340,11 @@ async function allCollections() {
     .sort((a, b) => b.id - a.id);
 }
 
-// Tokens and NFTs held by an account.
+// Tokens and NFTs held by an account (among the 2,000 newest tokens).
 async function holdings(addr) {
   if (!api.query.assets) return { tokens: [], nfts: [] };
-  const [list, nftKeys] = await Promise.all([allTokens(), api.query.nfts.account.keys(addr)]);
+  const [all, nftKeys] = await Promise.all([allTokens(), api.query.nfts.account.keysPaged({ args: [addr], pageSize: 200 })]);
+  const list = all.slice(0, 2000);
   const bals = list.length ? await api.query.assets.account.multi(list.map((t) => [t.id, addr])) : [];
   const tokens = list
     .map((t, i) => ({ id: t.id, name: t.name, symbol: t.symbol, decimals: t.decimals, balance: bals[i].isSome ? bals[i].unwrap().balance.toString() : "0", owner: t.owner === addr }))
@@ -413,12 +438,17 @@ const routes = {
     const id = String(p.id ?? "").toLowerCase();
     if (!/^0x[0-9a-f]{32}$/.test(id)) return null;
     const L = api.query.coaliLedger;
-    const [info, count, content, snaps, totals] = await Promise.all([
+    const [info, count, content, snaps, totals, rules, proofs, log, recount, revealed] = await Promise.all([
       L.decisions(id),
       L.voteCount(id),
       L.decisionContent?.(id),
       L.snapshots.entries(id),
       L.snapshotTotals?.entries(id) ?? [],
+      L.decisionRulesOf?.(id),
+      L.snapshotProofs?.entries(id) ?? [],
+      L.voteLog?.(id),
+      L.recountOf?.(id),
+      L.revealedCount?.(id),
     ]);
     if (info.isNone) return null;
     const d = info.unwrap();
@@ -430,6 +460,13 @@ const routes = {
       }
     };
     const totalsBySeq = new Map(totals.map(([k, v]) => [k.args[1].toNumber(), json(v.unwrap())]));
+    // Runtime 204+: what the chain itself checked for each snapshot.
+    const proofBySeq = new Map(
+      proofs.map(([k, v]) => {
+        const p = v.unwrap();
+        return [k.args[1].toNumber(), { voteCount: p.voteCount.toNumber(), voteLog: p.voteLog.isSome ? p.voteLog.unwrap().toHex() : null, merkleVersion: p.merkleVersion.toNumber() }];
+      }),
+    );
     const results = snaps
       .map(([k, v]) => {
         const s = v.unwrap();
@@ -438,12 +475,14 @@ const routes = {
           seq,
           isFinal: s.isFinal.isTrue,
           publishedAt: s.publishedAt.toNumber(),
+          merkleRoot: s.merkleRoot.toHex(),
           totalsHash: s.totalsHash.toHex(),
           totals: totalsBySeq.get(seq) ?? null,
+          checked: proofBySeq.get(seq) ?? null,
         };
       })
       .sort((a, b) => a.seq - b.seq);
-    const evs = q(`SELECT * FROM evs WHERE section='coaliLedger' AND method IN ('DecisionRegistered','VoteRecorded','SnapshotPublished')
+    const evs = q(`SELECT * FROM evs WHERE section='coaliLedger' AND method IN ('DecisionRegistered','DecisionRulesSet','VoteRecorded','SnapshotPublished','ResultRecounted')
       AND json_extract(data, '$.decisionId')=? ORDER BY n DESC, i DESC LIMIT 500`).all(id).map(parseRow);
     return {
       id,
@@ -453,6 +492,12 @@ const routes = {
       registeredAt: d.registeredAt.toNumber(),
       closed: d.closed.isTrue,
       votes: count.toNumber(),
+      endsAt: rules?.isSome ? (rules.unwrap().endsAt.isSome ? rules.unwrap().endsAt.unwrap().toNumber() : null) : null,
+      maxVoters: rules?.isSome ? rules.unwrap().maxVoters.toNumber() : null,
+      voteLog: log?.isSome ? log.unwrap().toHex() : null,
+      // After closing: votes revealed and the chain's own count compared with the final totals.
+      revealed: revealed ? revealed.toNumber() : 0,
+      recount: recount?.isSome ? { matches: recount.unwrap().matches.isTrue, votes: recount.unwrap().votes.toNumber() } : null,
       // Published on chain only if it hashes to contentHash / the snapshot's totalsHash.
       content: content?.isSome ? json(content.unwrap()) : null,
       results,
@@ -460,8 +505,12 @@ const routes = {
     };
   },
 
-  tokens: allTokens,
-  collections: allCollections,
+  async tokens(p) {
+    return page(await allTokens(), p);
+  },
+  async collections(p) {
+    return page(await allCollections(), p);
+  },
 
   async token(p) {
     const id = Number(p.id);
@@ -471,8 +520,9 @@ const routes = {
       api.query.assets.metadata(id),
       api.query.tokenAllowlist.restricted(id),
       api.query.tokenAllowlist.fixedSupply?.(id),
-      api.query.assets.account.entries(id),
-      api.query.tokenAllowlist.allowed.keys(id),
+      // Holders read in one page: the top 100 is computed among the first 5,000 accounts.
+      api.query.assets.account.entriesPaged({ args: [id], pageSize: 5000 }),
+      api.query.tokenAllowlist.allowed.keysPaged({ args: [id], pageSize: 1000 }),
     ]);
     if (d.isNone) return null;
     const holders = accounts
@@ -493,8 +543,8 @@ const routes = {
     const [c, m, items, metas] = await Promise.all([
       api.query.nfts.collection(id),
       api.query.nfts.collectionMetadataOf(id),
-      api.query.nfts.item.entries(id),
-      api.query.nfts.itemMetadataOf.entries(id),
+      api.query.nfts.item.entriesPaged({ args: [id], pageSize: 500 }),
+      api.query.nfts.itemMetadataOf.entriesPaged({ args: [id], pageSize: 500 }),
     ]);
     if (c.isNone) return null;
     const meta = new Map(metas.map(([k, v]) => [k.args[1].toNumber(), v]));
@@ -550,10 +600,11 @@ const routes = {
   async account(p) {
     const addr = normAddr(p.id);
     if (!addr) return null;
-    const [info, verified, trustReceived, founders, candidateTrust, offline, validators, attester] = await Promise.all([
+    const [info, verified, trustReceived, verifiedTrust, founders, candidateTrust, offline, validators, attester] = await Promise.all([
       api.query.system.account(addr),
       api.query.proofOfTrust.verified(addr),
       api.query.coaliLedger.trustReceived(addr),
+      api.query.proofOfTrust.verifiedTrust?.(addr),
       api.query.proofOfTrust.founders(),
       api.query.proofOfTrust.candidates(addr),
       api.query.proofOfTrust.offline(addr),
@@ -575,6 +626,7 @@ const routes = {
       nonce: info.nonce.toNumber(),
       verified: verified.isSome,
       trustReceived: trustReceived.toNumber(),
+      verifiedTrust: verifiedTrust ? verifiedTrust.toNumber() : null,
       founder: founders.some((f) => f.eq(addr)),
       candidateFor: candidateTrust.isSome ? encodeAddress(candidateTrust.unwrap(), SS58) : null,
       offline: offline.isSome,
@@ -602,6 +654,20 @@ const routes = {
   },
 };
 
+// Responses are cached briefly per URL, and identical requests in flight share one computation,
+// so that heavy pages (stats counts, token holders) cost the same at 1 or 1,000 requests/s.
+const CACHE_TTL = { stats: 6_000, tokens: 30_000, collections: 30_000, token: 10_000, collection: 10_000, account: 6_000, decision: 6_000 };
+const cache = new Map();
+function cached(key, ttl, compute) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  const value = compute();
+  cache.set(key, { at: Date.now(), value });
+  value.catch(() => cache.delete(key));
+  if (cache.size > 2000) for (const k of [...cache.keys()].slice(0, 500)) cache.delete(k);
+  return value;
+}
+
 http
   .createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
@@ -612,9 +678,10 @@ http
     res.setHeader("Access-Control-Allow-Origin", "*");
     if (!fn) return res.writeHead(404).end(JSON.stringify({ error: "not found" }));
     try {
-      const out = await fn(params);
+      const ttl = CACHE_TTL[parts[0]] ?? 2_000;
+      const out = await cached(url.pathname + url.search, ttl, () => Promise.resolve(fn(params)).then((o) => (o === null ? null : JSON.stringify(o))));
       if (out === null) return res.writeHead(404).end(JSON.stringify({ error: "not found" }));
-      res.end(JSON.stringify(out));
+      res.end(out);
     } catch (e) {
       console.error(req.url, e);
       res.writeHead(500).end(JSON.stringify({ error: "internal error" }));

@@ -69,14 +69,28 @@ export const contentHash = (content: unknown): Hex => toHex(blake2_256(enc.encod
 /** Hash of a result snapshot's totals ({ optionId: count }). */
 export const totalsHash = (totals: Record<string, number>): Hex => contentHash(totals);
 
-/** Merkle leaf of one vote: blake2_256(voter public key ‖ commitment). */
-export function voteLeaf(voterPublicKey: Uint8Array | string, commitment: Uint8Array | string): Uint8Array {
+/**
+ * Merkle scheme of result snapshots. Version 2 (runtime 204 and later) separates leaves from
+ * inner nodes: leaf = blake2_256(0x00 ‖ voter public key ‖ commitment), node =
+ * blake2_256(0x01 ‖ left ‖ right). Version 1 (earlier snapshots) had no prefixes.
+ */
+export const MERKLE_VERSION = 2;
+
+const concat = (...parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+};
+
+/** Merkle leaf of one vote (see `MERKLE_VERSION`). */
+export function voteLeaf(voterPublicKey: Uint8Array | string, commitment: Uint8Array | string, version = MERKLE_VERSION): Uint8Array {
   const pk = typeof voterPublicKey === "string" ? fromHex(voterPublicKey) : voterPublicKey;
   const c = typeof commitment === "string" ? fromHex(commitment) : commitment;
-  const buf = new Uint8Array(pk.length + c.length);
-  buf.set(pk);
-  buf.set(c, pk.length);
-  return blake2_256(buf);
+  return blake2_256(version >= 2 ? concat(new Uint8Array([0]), pk, c) : concat(pk, c));
 }
 
 function compareBytes(a: Uint8Array, b: Uint8Array): number {
@@ -85,20 +99,18 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 }
 
 /**
- * Merkle root of a result snapshot: leaves sorted bytewise, pairs hashed with blake2_256,
- * an odd last node is carried up unchanged. No leaves gives 32 zero bytes.
+ * Merkle root of a result snapshot: leaves sorted bytewise, pairs hashed with blake2_256
+ * (prefixed with 0x01 from version 2), an odd last node is carried up unchanged. No leaves gives
+ * 32 zero bytes.
  */
-export function merkleRoot(leaves: Uint8Array[]): Hex {
+export function merkleRoot(leaves: Uint8Array[], version = MERKLE_VERSION): Hex {
   if (leaves.length === 0) return toHex(new Uint8Array(32));
   let level = [...leaves].sort(compareBytes);
   while (level.length > 1) {
     const next: Uint8Array[] = [];
     for (let i = 0; i < level.length; i += 2) {
       if (i + 1 < level.length) {
-        const buf = new Uint8Array(level[i].length + level[i + 1].length);
-        buf.set(level[i]);
-        buf.set(level[i + 1], level[i].length);
-        next.push(blake2_256(buf));
+        next.push(blake2_256(version >= 2 ? concat(new Uint8Array([1]), level[i], level[i + 1]) : concat(level[i], level[i + 1])));
       } else next.push(level[i]);
     }
     level = next;

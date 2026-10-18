@@ -26,7 +26,7 @@ fn fee_follows_the_dollar() {
 			UNIT / 5
 		);
 		// ZOOZ worth 10x more: the fee in ZOOZ is 10x lower.
-		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::signed(ORACLE), 2_500_000));
+		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::root(), 2_500_000));
 		assert_eq!(Economy::target_fee(), UNIT / 50);
 		// A 200-byte transaction adds about 10%.
 		assert_eq!(Economy::length_fee(200), UNIT / 500);
@@ -39,6 +39,48 @@ fn only_admin_or_oracle_sets_the_price() {
 		assert_noop!(ZoozEconomy::set_price(RuntimeOrigin::signed(USER), 1), DispatchError::BadOrigin);
 		assert_noop!(ZoozEconomy::set_price(RuntimeOrigin::root(), 0), Error::<Test>::ZeroPrice);
 		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::root(), 300_000));
+	});
+}
+
+#[test]
+fn oracle_moves_the_price_within_limits_only() {
+	new_test_ext().execute_with(|| {
+		let oracle = || RuntimeOrigin::signed(ORACLE);
+		// 250_000 -> +20% is the most one update may move.
+		assert_noop!(ZoozEconomy::set_price(oracle(), 25_000_000), Error::<Test>::PriceChangeTooLarge);
+		assert_noop!(ZoozEconomy::set_price(oracle(), 2_500), Error::<Test>::PriceChangeTooLarge);
+		assert_ok!(ZoozEconomy::set_price(oracle(), 300_000));
+		// Then it must wait min_interval blocks.
+		assert_noop!(ZoozEconomy::set_price(oracle(), 310_000), Error::<Test>::PriceUpdateTooSoon);
+		System::set_block_number(1 + 3_600);
+		assert_ok!(ZoozEconomy::set_price(oracle(), 240_000));
+		// Absurd prices are refused to everyone, the admin included.
+		assert_noop!(ZoozEconomy::set_price(RuntimeOrigin::root(), u64::MAX), Error::<Test>::PriceOutOfRange);
+		assert_noop!(ZoozEconomy::set_price(RuntimeOrigin::root(), 999), Error::<Test>::PriceOutOfRange);
+	});
+}
+
+#[test]
+fn fees_never_drop_below_the_minimum() {
+	new_test_ext().execute_with(|| {
+		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::root(), 100_000_000));
+		// $0.05 at $100 would be 0.0005 ZOOZ; the floor is 0.02 ZOOZ.
+		assert_eq!(Economy::target_fee(), UNIT / 50);
+		assert_noop!(ZoozEconomy::set_min_fee(RuntimeOrigin::signed(ORACLE), 0), DispatchError::BadOrigin);
+		assert_ok!(ZoozEconomy::set_min_fee(RuntimeOrigin::root(), UNIT / 10));
+		assert_eq!(Economy::target_fee(), UNIT / 10);
+	});
+}
+
+#[test]
+fn admin_sets_price_limits() {
+	new_test_ext().execute_with(|| {
+		let limits = crate::PriceLimits { min_micro_usd: 10, max_micro_usd: 5, max_change: Percent::from_percent(5), min_interval: 10 };
+		assert_noop!(ZoozEconomy::set_price_limits(RuntimeOrigin::root(), limits.clone()), Error::<Test>::BadPriceLimits);
+		let limits = crate::PriceLimits { max_micro_usd: 1_000_000, ..limits };
+		assert_noop!(ZoozEconomy::set_price_limits(RuntimeOrigin::signed(ORACLE), limits.clone()), DispatchError::BadOrigin);
+		assert_ok!(ZoozEconomy::set_price_limits(RuntimeOrigin::root(), limits));
+		assert_noop!(ZoozEconomy::set_price(RuntimeOrigin::signed(ORACLE), 270_000), Error::<Test>::PriceChangeTooLarge);
 	});
 }
 

@@ -40,31 +40,50 @@ test("canonical JSON and content hash", () => {
   assert.equal(totalsHash({ b: 2, a: 1 }), u8aToHex(blake2AsU8a(stringToU8a('{"a":1,"b":2}'))));
 });
 
-// Relayer implementation, copied from relayer/index.mjs.
+// Relayer implementation (v2, runtime 204+), copied from relayer/index.mjs.
+const LEAF = new Uint8Array([0]);
+const NODE = new Uint8Array([1]);
 function relayerRoot(leaves) {
   if (leaves.length === 0) return new Uint8Array(32);
   let level = [...leaves].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   while (level.length > 1) {
     const next = [];
     for (let i = 0; i < level.length; i += 2) {
-      next.push(i + 1 < level.length ? blake2AsU8a(u8aConcat(level[i], level[i + 1])) : level[i]);
+      next.push(i + 1 < level.length ? blake2AsU8a(u8aConcat(NODE, level[i], level[i + 1])) : level[i]);
     }
     level = next;
   }
   return level[0];
 }
 
-test("merkle root matches the relayer", () => {
+test("merkle root matches the relayer (v2)", () => {
   for (const n of [0, 1, 2, 3, 5, 8, 13]) {
     const leaves = Array.from({ length: n }, (_, i) => {
       const pk = blake2AsU8a(stringToU8a(`pk${i}`));
       const c = blake2AsU8a(stringToU8a(`c${i}`));
       const leaf = voteLeaf(pk, c);
-      assert.equal(u8aToHex(leaf), u8aToHex(blake2AsU8a(u8aConcat(pk, c))));
+      assert.equal(u8aToHex(leaf), u8aToHex(blake2AsU8a(u8aConcat(LEAF, pk, c))));
       return leaf;
     });
     assert.equal(merkleRoot(leaves), u8aToHex(relayerRoot(leaves)), `n=${n}`);
   }
+});
+
+test("v1 snapshots (before runtime 204) still verify", () => {
+  const pk = blake2AsU8a(stringToU8a("pk"));
+  const c = blake2AsU8a(stringToU8a("c"));
+  const a = voteLeaf(pk, c, 1);
+  const b = voteLeaf(c, pk, 1);
+  assert.equal(u8aToHex(a), u8aToHex(blake2AsU8a(u8aConcat(pk, c))));
+  const [x, y] = [a, b].sort((p, q) => Buffer.compare(Buffer.from(p), Buffer.from(q)));
+  assert.equal(merkleRoot([a, b], 1), u8aToHex(blake2AsU8a(u8aConcat(x, y))));
+});
+
+test("v2: an inner node cannot pass as a vote leaf", () => {
+  const leaves = [0, 1, 2, 3].map((i) => voteLeaf(blake2AsU8a(stringToU8a(`v${i}`)), new Uint8Array(32)));
+  leaves.sort((p, q) => Buffer.compare(Buffer.from(p), Buffer.from(q)));
+  const node = blake2AsU8a(u8aConcat(NODE, leaves[0], leaves[1]));
+  assert.notEqual(u8aToHex(voteLeaf(leaves[0], leaves[1])), u8aToHex(node));
 });
 
 test("ZOOZ amounts", () => {

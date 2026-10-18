@@ -7,6 +7,7 @@ export {
   decisionUuid,
   fromHex,
   merkleRoot,
+  MERKLE_VERSION,
   toHex,
   totalsHash,
   voteCommitment,

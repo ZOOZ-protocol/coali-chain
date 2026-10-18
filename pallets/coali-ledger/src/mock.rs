@@ -37,8 +37,40 @@ impl frame_system::Config for Test {
 	type Lookup = IdentityLookup<AccountId32>;
 }
 
+frame_support::ord_parameter_types! {
+	pub const IdentityAttester: AccountId32 = AccountId32::new([42; 32]);
+}
+
+pub fn identity_attester() -> AccountId32 {
+	AccountId32::new([42; 32])
+}
+
 parameter_types! {
 	pub const ChainTag: [u8; 8] = *b"coali-t1";
+	pub static Now: u64 = 0;
+	pub static Removed: Vec<AccountId32> = vec![];
+}
+
+/// Unix time in ms set by the tests (`set_now`).
+pub struct MockTime;
+impl frame_support::traits::UnixTime for MockTime {
+	fn now() -> core::time::Duration {
+		core::time::Duration::from_millis(Now::get())
+	}
+}
+
+/// Unix ms at the start of each test.
+pub const START: u64 = 1_800_000_000_000;
+
+pub fn set_now(ms: u64) {
+	Now::set(ms);
+}
+
+pub struct RecordRemoval;
+impl pallet_coali_ledger::OnAttesterRemoved<AccountId32> for RecordRemoval {
+	fn attester_removed(who: &AccountId32) {
+		Removed::mutate(|r| r.push(who.clone()));
+	}
 }
 
 impl pallet_coali_ledger::Config for Test {
@@ -47,6 +79,13 @@ impl pallet_coali_ledger::Config for Test {
 	type Signature = MultiSignature;
 	type Signer = MultiSigner;
 	type ChainTag = ChainTag;
+	type Time = MockTime;
+	type ElectorateOrigin = frame_system::EnsureSignedBy<IdentityAttester, AccountId32>;
+	type MinVotingPeriod = frame_support::traits::ConstU64<3_600_000>;
+	type VoteGrace = frame_support::traits::ConstU64<86_400_000>;
+	type MaxRevealsPerCall = frame_support::traits::ConstU32<100>;
+	type OnTrustChanged = ();
+	type OnAttesterRemoved = RecordRemoval;
 	type WeightInfo = ();
 }
 
@@ -68,6 +107,12 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 		.assimilate_storage(&mut storage)
 		.unwrap();
 	let mut ext: sp_io::TestExternalities = storage.into();
-	ext.execute_with(|| System::set_block_number(1));
+	// Benchmarks create sr25519 keys through the host keystore.
+	ext.register_extension(sp_keystore::KeystoreExt::new(sp_keystore::testing::MemoryKeystore::new()));
+	ext.execute_with(|| {
+		System::set_block_number(1);
+		set_now(START);
+		pallet_coali_ledger::Electorate::<Test>::insert(attester(), 1_000);
+	});
 	ext
 }

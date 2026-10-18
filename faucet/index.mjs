@@ -1,9 +1,16 @@
-// Coalichain testnet faucet: GET / serves a form, POST /drip {address} sends test tokens.
-// One drip per address every 24 hours, and at most IP_LIMIT drips per IP every 24 hours (in memory).
+// Coalichain testnet faucet: GET / serves a form, GET /challenge a proof-of-work puzzle,
+// POST /drip {address, challenge, nonce} sends test tokens.
+// One drip per address every 24 hours, and at most IP_LIMIT drips per IP every 24 hours.
+// Limits are reserved before sending (concurrent requests cannot all pass), kept on disk
+// (a restart does not reset them), and the client IP is the one the reverse proxy saw.
 // Env: CHAIN_WS, FAUCET_URI (secret of a funded account), DRIP_AMOUNT (whole tokens, default 100),
-// IP_LIMIT (default 5), EXPLORER_URL (default https://explorer.testnet.coali.app), PORT.
+// IP_LIMIT (default 5), POW_BITS (default 18), STATE_FILE (default /data/faucet-state.json),
+// EXPLORER_URL (default https://explorer.testnet.coali.app), PORT.
 
 import http from "node:http";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady, decodeAddress, encodeAddress } from "@polkadot/util-crypto";
@@ -14,6 +21,10 @@ const DAY = 24 * 3600 * 1000;
 const IP_LIMIT = Number(process.env.IP_LIMIT ?? 5);
 const DRIP = Number(process.env.DRIP_AMOUNT ?? 100);
 const EXPLORER = process.env.EXPLORER_URL ?? "https://explorer.testnet.coali.app";
+const POW_BITS = Number(process.env.POW_BITS ?? 18);
+const STATE_FILE = process.env.STATE_FILE ?? "/data/faucet-state.json";
+const CHALLENGE_TTL = 10 * 60 * 1000;
+const SECRET = randomBytes(32);
 
 await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(WS), noInitWarn: true });
@@ -23,6 +34,78 @@ const symbol = api.registry.chainTokens[0] ?? "ZOOZ";
 const amount = BigInt(DRIP) * 10n ** BigInt(decimals);
 const lastByAddress = new Map();
 const dripsByIp = new Map();
+const usedChallenges = new Map();
+
+// Limits survive restarts.
+try {
+  const saved = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+  const now = Date.now();
+  for (const [a, t] of saved.addresses ?? []) if (now - t < DAY) lastByAddress.set(a, t);
+  for (const [ip, ts] of saved.ips ?? []) {
+    const recent = ts.filter((t) => now - t < DAY);
+    if (recent.length) dripsByIp.set(ip, recent);
+  }
+} catch {
+  // First start.
+}
+let saveTimer = null;
+const saveState = () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      mkdirSync(dirname(STATE_FILE), { recursive: true });
+      writeFileSync(STATE_FILE, JSON.stringify({ addresses: [...lastByAddress], ips: [...dripsByIp] }));
+    } catch (e) {
+      console.error("faucet state not saved:", e.message);
+    }
+  }, 500);
+};
+
+// Proof of work: sha256(challenge + nonce) must start with POW_BITS zero bits. Challenges are
+// signed (no server state until used) and single-use.
+const sign = (data) => createHmac("sha256", SECRET).update(data).digest("hex");
+function newChallenge() {
+  const body = `${Date.now()}.${randomBytes(12).toString("hex")}`;
+  return `${body}.${sign(body)}`;
+}
+function leadingZeroBits(buf) {
+  let bits = 0;
+  for (const byte of buf) {
+    if (byte === 0) {
+      bits += 8;
+      continue;
+    }
+    bits += Math.clz32(byte) - 24;
+    break;
+  }
+  return bits;
+}
+function checkWork(challenge, nonce) {
+  if (typeof challenge !== "string" || typeof nonce !== "string" || nonce.length > 32) return false;
+  const i = challenge.lastIndexOf(".");
+  if (i < 0) return false;
+  const body = challenge.slice(0, i);
+  const mac = Buffer.from(challenge.slice(i + 1), "hex");
+  const expected = Buffer.from(sign(body), "hex");
+  if (mac.length !== expected.length || !timingSafeEqual(mac, expected)) return false;
+  const issued = Number(body.split(".")[0]);
+  const now = Date.now();
+  if (!(now - issued < CHALLENGE_TTL) || usedChallenges.has(challenge)) return false;
+  if (leadingZeroBits(createHash("sha256").update(challenge + nonce).digest()) < POW_BITS) return false;
+  usedChallenges.set(challenge, now);
+  for (const [c, t] of usedChallenges) if (now - t > CHALLENGE_TTL) usedChallenges.delete(c);
+  return true;
+}
+
+// Behind Caddy the last X-Forwarded-For entry is the address Caddy saw; earlier entries come
+// from the client and can be forged. Direct connections use the socket address.
+function clientIp(req) {
+  const peer = req.socket.remoteAddress ?? "";
+  const privatePeer = /^(::ffff:)?(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)|^::1$/.test(peer);
+  const xff = req.headers["x-forwarded-for"];
+  if (privatePeer && xff) return String(xff).split(",").pop().trim();
+  return peer;
+}
 
 let queue = Promise.resolve();
 const drip = (address) =>
@@ -90,14 +173,18 @@ html[lang=en] [data-l=fr],html[lang=fr] [data-l=en]{display:none!important}
 function getLang(){const q=new URLSearchParams(location.search).get('lang');if(q)return q;const c=document.cookie.match(/(?:^|; )lang=(en|fr)/);if(c)return c[1];return (navigator.language||'').startsWith('fr')?'fr':'en'}
 function setLang(l){L=l;document.documentElement.lang=l;document.cookie='lang='+l+';domain=.testnet.coali.app;path=/;max-age=31536000;samesite=lax';for(const x of['en','fr'])document.getElementById('b-'+x).className=x===l?'on':''}
 let L;setLang(getLang()==='fr'?'fr':'en');
-const T={en:{sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See your account and its history in the explorer',acct:'Network error, please retry.'},
-fr:{sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir votre compte et son historique dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};
+const T={en:{checking:'Checking your browser (a few seconds)…',sending:'Sending…',sent:'Sent!',bal:'Your balance',block:'Recorded in block',final:'Final (irreversible) in about 12 seconds.',see:'See your account and its history in the explorer',acct:'Network error, please retry.'},
+fr:{checking:'Vérification de votre navigateur (quelques secondes)…',sending:'Envoi en cours…',sent:'Envoyé !',bal:'Votre solde',block:'Enregistré dans le bloc',final:'Définitif (irréversible) dans environ 12 secondes.',see:'Voir votre compte et son historique dans l\\'explorateur',acct:'Erreur réseau, réessayez.'}};
 const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function work(c,bits){const enc=new TextEncoder();for(let n=0;;n++){const h=new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(c+n)));let z=0;for(const x of h){if(x===0){z+=8;continue}z+=Math.clz32(x)-24;break}if(z>=bits)return String(n)}}
 async function go(){
   const o=document.getElementById('out'),b=document.getElementById('b'),a=document.getElementById('a').value.trim(),t=T[L];
-  o.className='wait';o.textContent=t.sending;b.disabled=true;
+  o.className='wait';o.textContent=t.checking;b.disabled=true;
   try{
-    const r=await fetch('/drip',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address:a})});
+    const ch=await (await fetch('/challenge')).json();
+    const nonce=await work(ch.challenge,ch.bits);
+    o.textContent=t.sending;
+    const r=await fetch('/drip',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({address:a,challenge:ch.challenge,nonce})});
     const j=await r.json();
     if(r.ok){o.className='ok';o.innerHTML='<b>✅ '+t.sent+'</b>'+
       '<div class="row"><span>'+t.bal+'</span><span>'+esc(j.balance)+'</span></div>'+
@@ -121,6 +208,7 @@ http
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return res.end(page);
     }
+    if (req.method === "GET" && req.url === "/challenge") return json(res, 200, { challenge: newChallenge(), bits: POW_BITS });
     if (req.method !== "POST" || req.url !== "/drip") return json(res, 404, { en: "Not found", fr: "Introuvable" });
 
     let body = "";
@@ -129,15 +217,23 @@ http
       if (body.length > 1000) return json(res, 413, { en: "Request too large", fr: "Requête trop grande" });
     }
     let address;
+    let request;
     try {
-      address = encodeAddress(decodeAddress(JSON.parse(body).address), 42);
+      request = JSON.parse(body);
+      address = encodeAddress(decodeAddress(request.address), 42);
     } catch {
       return json(res, 400, {
         en: "This address is not valid. A Coalichain address usually starts with 5 (copy it from your wallet).",
         fr: "Cette adresse n'est pas valide. Une adresse Coalichain commence en général par 5 (copiez-la depuis votre portefeuille).",
       });
     }
-    const ip = (req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+    if (!checkWork(request.challenge, String(request.nonce ?? ""))) {
+      return json(res, 400, {
+        en: "Browser check failed or expired. Please reload the page and try again.",
+        fr: "La vérification du navigateur a échoué ou a expiré. Rechargez la page et réessayez.",
+      });
+    }
+    const ip = clientIp(req);
     const now = Date.now();
     const hoursLeft = (t) => Math.max(1, Math.ceil((t + DAY - now) / 3600000));
 
@@ -159,10 +255,14 @@ http
         fr: `Trop de demandes depuis cette connexion internet aujourd'hui (${IP_LIMIT} maximum). Réessayez dans environ ${h} h.`,
       });
     }
+    // Reserve before sending: a parallel request for the same address or IP now sees the limit.
+    const previousAddress = lastByAddress.get(address);
+    const previousIp = dripsByIp.get(ip);
+    lastByAddress.set(address, now);
+    dripsByIp.set(ip, [...fromIp, now]);
+    saveState();
     try {
       const r = await drip(address);
-      lastByAddress.set(address, now);
-      dripsByIp.set(ip, [...fromIp, now]);
       const blockNumber = (await api.rpc.chain.getHeader(r.block)).number.toNumber();
       json(res, 200, {
         ...r,
@@ -171,6 +271,12 @@ http
         explorer: `${EXPLORER}/account/${address}`,
       });
     } catch (e) {
+      // Nothing was sent: release the reservation.
+      if (previousAddress === undefined) lastByAddress.delete(address);
+      else lastByAddress.set(address, previousAddress);
+      if (previousIp === undefined) dripsByIp.delete(ip);
+      else dripsByIp.set(ip, previousIp);
+      saveState();
       json(res, 500, {
         en: `Sending failed, please try again in a few minutes. (${e.message})`,
         fr: `L'envoi a échoué, réessayez dans quelques minutes. (${e.message})`,

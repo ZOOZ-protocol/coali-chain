@@ -38,6 +38,9 @@ pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "p
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-multisig = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-proxy = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+pallet-offences = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 pallet-coali-ledger = { path = "./pallets/coali-ledger", default-features = false }
 pallet-proof-of-trust = { path = "./pallets/proof-of-trust", default-features = false }
 pallet-zooz-economy = { path = "./pallets/zooz-economy", default-features = false }
@@ -73,6 +76,7 @@ sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polka
 sp-genesis-builder = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-io = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
+sp-keystore = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-keyring = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-offchain = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-stable2606-3", default-features = false }

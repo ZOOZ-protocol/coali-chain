@@ -69,10 +69,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	//   `spec_version`, and `authoring_version` are the same between Wasm and native.
 	// This value is set to 100 to notify Polkadot-JS App (https://polkadot.js.org/apps) to use
 	//   the compatible custom types.
-	spec_version: 203,
+	spec_version: 204,
 	impl_version: 1,
 	apis: apis::RUNTIME_API_VERSIONS,
-	transaction_version: 1,
+	// 2: coali-ledger register_decision and publish_snapshot take new arguments.
+	transaction_version: 2,
 	system_version: 1,
 };
 
@@ -247,4 +248,18 @@ mod runtime {
 	// Several actions signed at once (e.g. create + name + mint a token).
 	#[runtime::pallet_index(15)]
 	pub type Utility = pallet_utility;
+
+	// Several keys approving one call (sudo, then governance), and keys limited to some calls.
+	#[runtime::pallet_index(16)]
+	pub type Multisig = pallet_multisig;
+
+	#[runtime::pallet_index(17)]
+	pub type Proxy = pallet_proxy;
+
+	// GRANDPA equivocation reports: past session keys and offences, handled by proof of trust.
+	#[runtime::pallet_index(18)]
+	pub type Historical = pallet_session::historical;
+
+	#[runtime::pallet_index(19)]
+	pub type Offences = pallet_offences;
 }

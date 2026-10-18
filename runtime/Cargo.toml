@@ -34,6 +34,9 @@ pallet-aura = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-grandpa = { workspace = true }
 pallet-sudo = { workspace = true }
+pallet-multisig = { workspace = true }
+pallet-proxy = { workspace = true }
+pallet-offences = { workspace = true }
 pallet-timestamp = { workspace = true }
 pallet-transaction-payment = { workspace = true }
 
@@ -65,7 +68,7 @@ frame-system-benchmarking = { optional = true, workspace = true }
 pallet-coali-ledger = { workspace = true }
 pallet-proof-of-trust = { workspace = true }
 pallet-zooz-economy = { workspace = true }
-pallet-session = { workspace = true }
+pallet-session = { workspace = true, features = ["historical"] }
 pallet-authorship = { workspace = true }
 
 [build-dependencies]
@@ -94,6 +97,9 @@ std = [
 	"pallet-balances/std",
 	"pallet-grandpa/std",
 	"pallet-sudo/std",
+	"pallet-multisig/std",
+	"pallet-proxy/std",
+	"pallet-offences/std",
 	"pallet-coali-ledger/std",
 	"pallet-proof-of-trust/std",
 	"pallet-zooz-economy/std",
@@ -132,6 +138,9 @@ runtime-benchmarks = [
 	"pallet-balances/runtime-benchmarks",
 	"pallet-grandpa/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
+	"pallet-multisig/runtime-benchmarks",
+	"pallet-proxy/runtime-benchmarks",
+	"pallet-offences/runtime-benchmarks",
 	"pallet-coali-ledger/runtime-benchmarks",
 	"pallet-proof-of-trust/runtime-benchmarks",
 	"pallet-zooz-economy/runtime-benchmarks",
@@ -153,6 +162,9 @@ try-runtime = [
 	"pallet-balances/try-runtime",
 	"pallet-grandpa/try-runtime",
 	"pallet-sudo/try-runtime",
+	"pallet-multisig/try-runtime",
+	"pallet-proxy/try-runtime",
+	"pallet-offences/try-runtime",
 	"pallet-coali-ledger/try-runtime",
 	"pallet-proof-of-trust/try-runtime",
 	"pallet-zooz-economy/try-runtime",

@@ -1,8 +1,10 @@
 //! # ZOOZ economy
 //!
-//! - **Fees pegged to the dollar.** The foundation (or an oracle account it appoints) publishes
-//!   the ZOOZ price; a typical transaction (one vote) then costs `TargetFeeMicroUsd` worth of
-//!   ZOOZ whatever the market price. Heavier transactions cost proportionally more.
+//! - **Fees pegged to the dollar.** An oracle account appointed by the foundation publishes the
+//!   ZOOZ price; a typical transaction (one vote) then costs `TargetFeeMicroUsd` worth of ZOOZ
+//!   whatever the market price. Heavier transactions cost proportionally more. The oracle is
+//!   held to a price range, a maximum change per update and a minimum time between updates, so
+//!   a manipulated market cannot make fees free or unpayable; fees never fall below `MinFee`.
 //! - **Fee split.** Each fee goes to the block author, the foundation and the app that generated
 //!   the transaction (`FeeSplit`, default 60/20/20). Without a known app, that share refills Fuel.
 //! - **Block rewards.** The block author also receives `BlockReward` from the Fuel reservoir,
@@ -45,9 +47,20 @@ pub mod pallet {
 	};
 	use frame_system::pallet_prelude::*;
 	use sp_runtime::{
-		traits::{AccountIdConversion, Zero},
+		traits::{AccountIdConversion, Saturating, Zero},
 		Percent,
 	};
+
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+	pub struct PriceLimits<BlockNumber> {
+		/// Lowest and highest accepted price, in millionths of a dollar.
+		pub min_micro_usd: u64,
+		pub max_micro_usd: u64,
+		/// Largest change the oracle may publish at once, relative to the current price.
+		pub max_change: Percent,
+		/// Blocks between two oracle updates.
+		pub min_interval: BlockNumber,
+	}
 
 	/// Where the genesis supply is kept. Each bucket is a keyless account.
 	#[derive(
@@ -136,6 +149,34 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type UserApp<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, T::AccountId, OptionQuery>;
 
+	#[pallet::type_value]
+	pub fn DefaultPriceLimits<T: Config>() -> PriceLimits<BlockNumberFor<T>> {
+		PriceLimits {
+			min_micro_usd: 1_000,
+			max_micro_usd: 100_000_000,
+			max_change: Percent::from_percent(20),
+			min_interval: 3_600u32.into(),
+		}
+	}
+
+	/// Limits on prices published by the oracle (the admin is only held to the range).
+	#[pallet::storage]
+	pub type PriceLimitsOf<T: Config> =
+		StorageValue<_, PriceLimits<BlockNumberFor<T>>, ValueQuery, DefaultPriceLimits<T>>;
+
+	/// Block of the last price published by the oracle.
+	#[pallet::storage]
+	pub type LastOracleUpdate<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
+
+	#[pallet::type_value]
+	pub fn DefaultMinFee<T: Config>() -> u128 {
+		T::Unit::get() / 50
+	}
+
+	/// Lowest fee of a typical transaction, in base units, whatever the price.
+	#[pallet::storage]
+	pub type MinFee<T: Config> = StorageValue<_, u128, ValueQuery, DefaultMinFee<T>>;
+
 	/// Payer of the fee being settled; only set during fee settlement.
 	#[pallet::storage]
 	pub type FeePayer<T: Config> = StorageValue<_, T::AccountId, OptionQuery>;
@@ -203,6 +244,8 @@ pub mod pallet {
 		OracleSet { who: Option<T::AccountId> },
 		Spent { bucket: Bucket, to: T::AccountId, amount: u128 },
 		AppChosen { who: T::AccountId, app: Option<T::AccountId> },
+		PriceLimitsSet { limits: PriceLimits<BlockNumberFor<T>> },
+		MinFeeSet { amount: u128 },
 	}
 
 	#[pallet::error]
@@ -210,6 +253,13 @@ pub mod pallet {
 		ZeroPrice,
 		SplitAbove100,
 		NotAnApp,
+		/// Outside the accepted price range.
+		PriceOutOfRange,
+		/// The oracle moved the price by more than the allowed change.
+		PriceChangeTooLarge,
+		/// The oracle published again before the minimum interval.
+		PriceUpdateTooSoon,
+		BadPriceLimits,
 	}
 
 	#[pallet::hooks]
@@ -222,15 +272,34 @@ pub mod pallet {
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// Publish the ZOOZ price (admin or oracle).
+		/// Publish the ZOOZ price. The admin is held to the price range; the oracle also to the
+		/// maximum change and the minimum interval (`PriceLimitsOf`).
 		#[pallet::call_index(0)]
-		#[pallet::weight(T::DbWeight::get().reads_writes(1, 1))]
+		#[pallet::weight(T::DbWeight::get().reads_writes(4, 2))]
 		pub fn set_price(origin: OriginFor<T>, micro_usd: u64) -> DispatchResult {
-			if T::AdminOrigin::try_origin(origin.clone()).is_err() {
+			let by_admin = T::AdminOrigin::try_origin(origin.clone()).is_ok();
+			if !by_admin {
 				let who = ensure_signed(origin)?;
 				ensure!(Oracle::<T>::get().as_ref() == Some(&who), DispatchError::BadOrigin);
 			}
 			ensure!(micro_usd > 0, Error::<T>::ZeroPrice);
+			let limits = PriceLimitsOf::<T>::get();
+			ensure!(
+				(limits.min_micro_usd..=limits.max_micro_usd).contains(&micro_usd),
+				Error::<T>::PriceOutOfRange
+			);
+			if !by_admin {
+				let now = frame_system::Pallet::<T>::block_number();
+				if let Some(last) = LastOracleUpdate::<T>::get() {
+					ensure!(now >= last.saturating_add(limits.min_interval), Error::<T>::PriceUpdateTooSoon);
+				}
+				let current = PriceMicroUsd::<T>::get();
+				if current > 0 {
+					let allowed = limits.max_change.mul_ceil(current);
+					ensure!(micro_usd.abs_diff(current) <= allowed, Error::<T>::PriceChangeTooLarge);
+				}
+				LastOracleUpdate::<T>::put(now);
+			}
 			PriceMicroUsd::<T>::put(micro_usd);
 			Self::deposit_event(Event::PriceSet { micro_usd });
 			Ok(())
@@ -300,6 +369,28 @@ pub mod pallet {
 			Ok(())
 		}
 
+		#[pallet::call_index(8)]
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		pub fn set_price_limits(origin: OriginFor<T>, limits: PriceLimits<BlockNumberFor<T>>) -> DispatchResult {
+			T::AdminOrigin::ensure_origin(origin)?;
+			ensure!(
+				limits.min_micro_usd > 0 && limits.min_micro_usd <= limits.max_micro_usd,
+				Error::<T>::BadPriceLimits
+			);
+			PriceLimitsOf::<T>::put(limits.clone());
+			Self::deposit_event(Event::PriceLimitsSet { limits });
+			Ok(())
+		}
+
+		#[pallet::call_index(9)]
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		pub fn set_min_fee(origin: OriginFor<T>, amount: u128) -> DispatchResult {
+			T::AdminOrigin::ensure_origin(origin)?;
+			MinFee::<T>::put(amount);
+			Self::deposit_event(Event::MinFeeSet { amount });
+			Ok(())
+		}
+
 		/// Choose the app that receives the app share of your fees (`None` to clear).
 		#[pallet::call_index(7)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(1, 1))]
@@ -322,10 +413,10 @@ pub mod pallet {
 			bucket.pallet_id().into_account_truncating()
 		}
 
-		/// Fee of a typical transaction, in base units, at the current price.
+		/// Fee of a typical transaction, in base units, at the current price, never below `MinFee`.
 		pub fn target_fee() -> u128 {
 			let price = PriceMicroUsd::<T>::get().max(1) as u128;
-			(TargetFeeMicroUsd::<T>::get() as u128).saturating_mul(T::Unit::get()) / price
+			((TargetFeeMicroUsd::<T>::get() as u128).saturating_mul(T::Unit::get()) / price).max(MinFee::<T>::get())
 		}
 
 		pub fn weight_fee(ref_time: u64) -> u128 {

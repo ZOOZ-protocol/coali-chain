@@ -52,10 +52,10 @@ use sp_version::RuntimeVersion;
 
 // Local module imports
 use super::{
-	AccountId, Aura, Balance, Balances, Block, BlockNumber, Hash, Nonce, PalletInfo, Runtime,
-	RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask,
-	Assets, Authorship, OriginCaller, ProofOfTrust, Signature, System, TokenAllowlist, DAYS, EXISTENTIAL_DEPOSIT,
-	MILLI_UNIT, SLOT_DURATION, UNIT, VERSION,
+	AccountId, Aura, Balance, Balances, Block, BlockNumber, Hash, Historical, Nonce, Offences, PalletInfo,
+	Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask,
+	Assets, Authorship, OriginCaller, ProofOfTrust, Signature, System, Timestamp, TokenAllowlist,
+	UncheckedExtrinsic, DAYS, EXISTENTIAL_DEPOSIT, MILLI_UNIT, SLOT_DURATION, UNIT, VERSION,
 };
 
 const NORMAL_DISPATCH_RATIO: Perbill = Perbill::from_percent(75);
@@ -80,8 +80,19 @@ parameter_types! {
 ///
 /// This can be a tuple of types, each implementing `OnRuntimeUpgrade`.
 #[allow(unused_parens)]
-type SingleBlockMigrations =
-	(pallet_assets::migration::next_asset_id::SetNextAssetId<FirstAssetId, Runtime>,);
+type SingleBlockMigrations = (
+	pallet_assets::migration::next_asset_id::SetNextAssetId<FirstAssetId, Runtime>,
+	pallet_proof_of_trust::migrations::MigrateV0ToV1<Runtime, LedgerAttesters>,
+);
+
+/// Identity attesters at the 204 upgrade: the ledger attesters (one key for now; to be moved to
+/// a separate key, see security/AUDIT-PRE-2026-10.md, ZOOZ-04).
+pub struct LedgerAttesters;
+impl frame_support::traits::Get<alloc::vec::Vec<AccountId>> for LedgerAttesters {
+	fn get() -> alloc::vec::Vec<AccountId> {
+		pallet_coali_ledger::Attesters::<Runtime>::iter_keys().collect()
+	}
+}
 
 /// The default types are being injected by [`derive_impl`](`frame_support::derive_impl`) from
 /// [`SoloChainDefaultConfig`](`struct@frame_system::config_preludes::SolochainDefaultConfig`),
@@ -124,16 +135,88 @@ impl pallet_aura::Config for Runtime {
 	type SlotDuration = pallet_aura::MinimumPeriodTimesTwo<Runtime>;
 }
 
+parameter_types! {
+	/// GRANDPA set ids kept to check equivocation proofs (one per session: about 14 hours).
+	pub const MaxSetIdSessionEntries: u64 = 168;
+	/// Blocks an equivocation report stays valid in the pool.
+	pub const ReportLongevity: u64 = 168 * 50;
+}
+
 impl pallet_grandpa::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 
 	type WeightInfo = ();
 	type MaxAuthorities = ConstU32<32>;
 	type MaxNominators = ConstU32<0>;
-	type MaxSetIdSessionEntries = ConstU64<0>;
+	type MaxSetIdSessionEntries = MaxSetIdSessionEntries;
 
-	type KeyOwnerProof = sp_core::Void;
-	type EquivocationReportSystem = ();
+	// A validator signing two conflicting finality votes is reported (by any node, unsigned) and
+	// handled by proof of trust through pallet_offences.
+	type KeyOwnerProof = sp_session::MembershipProof;
+	type EquivocationReportSystem =
+		pallet_grandpa::EquivocationReportSystem<Self, Offences, Historical, ReportLongevity>;
+}
+
+impl pallet_session::historical::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type FullIdentification = ();
+	type FullIdentificationOf = UnitIdentification;
+}
+
+pub struct UnitIdentification;
+impl sp_runtime::traits::Convert<AccountId, Option<()>> for UnitIdentification {
+	fn convert(_: AccountId) -> Option<()> {
+		Some(())
+	}
+}
+
+impl pallet_offences::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type IdentificationTuple = pallet_session::historical::IdentificationTuple<Self>;
+	type OnOffenceHandler = ProofOfTrust;
+}
+
+/// Proof of trust as the historical session manager (no full identification to keep).
+pub struct ProofOfTrustHistorical;
+impl pallet_session::SessionManager<AccountId> for ProofOfTrustHistorical {
+	fn new_session(new_index: u32) -> Option<alloc::vec::Vec<AccountId>> {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::new_session(new_index)
+	}
+	fn end_session(index: u32) {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::end_session(index)
+	}
+	fn start_session(index: u32) {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::start_session(index)
+	}
+}
+impl pallet_session::historical::SessionManager<AccountId, ()> for ProofOfTrustHistorical {
+	fn new_session(new_index: u32) -> Option<alloc::vec::Vec<(AccountId, ())>> {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::new_session(new_index)
+			.map(|set| set.into_iter().map(|v| (v, ())).collect())
+	}
+	fn end_session(index: u32) {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::end_session(index)
+	}
+	fn start_session(index: u32) {
+		<ProofOfTrust as pallet_session::SessionManager<AccountId>>::start_session(index)
+	}
+}
+
+impl<LocalCall> frame_system::offchain::CreateTransactionBase<LocalCall> for Runtime
+where
+	RuntimeCall: From<LocalCall>,
+{
+	type Extrinsic = UncheckedExtrinsic;
+	type RuntimeCall = RuntimeCall;
+}
+
+impl<LocalCall> frame_system::offchain::CreateBare<LocalCall> for Runtime
+where
+	RuntimeCall: From<LocalCall>,
+{
+	fn create_bare(call: RuntimeCall) -> UncheckedExtrinsic {
+		UncheckedExtrinsic::new_bare(call)
+	}
 }
 
 impl pallet_timestamp::Config for Runtime {
@@ -192,6 +275,8 @@ parameter_types! {
 	/// A newly selected validator starts one session later, then has a full session
 	/// (at least one Aura slot, since MaxValidators < SessionPeriod) to author.
 	pub const PotOfflineAfter: BlockNumber = 120;
+	pub const PotMaxStrikes: u32 = 5;
+	pub const PotStrikeForgiveness: BlockNumber = 7 * DAYS;
 }
 
 impl pallet_authorship::Config for Runtime {
@@ -205,7 +290,7 @@ impl pallet_session::Config for Runtime {
 	type ValidatorIdOf = sp_runtime::traits::ConvertInto;
 	type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
 	type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-	type SessionManager = ProofOfTrust;
+	type SessionManager = pallet_session::historical::NoteHistoricalRoot<Self, ProofOfTrustHistorical>;
 	type SessionHandler = <super::SessionKeys as sp_runtime::traits::OpaqueKeys>::KeyTypeIdProviders;
 	type Keys = super::SessionKeys;
 	type DisablingStrategy = ();
@@ -217,11 +302,12 @@ impl pallet_session::Config for Runtime {
 impl pallet_proof_of_trust::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type AdminOrigin = frame_system::EnsureRoot<AccountId>;
-	type AttesterOrigin = pallet_coali_ledger::EnsureAttester<Runtime>;
 	type TrustScore = super::CoaliLedger;
 	type MaxValidators = PotMaxValidators;
 	type MaxCandidates = PotMaxCandidates;
 	type OfflineAfter = PotOfflineAfter;
+	type MaxStrikes = PotMaxStrikes;
+	type StrikeForgiveness = PotStrikeForgiveness;
 }
 
 parameter_types! {
@@ -235,7 +321,15 @@ impl pallet_coali_ledger::Config for Runtime {
 	type Signature = super::Signature;
 	type Signer = <super::Signature as sp_runtime::traits::Verify>::Signer;
 	type ChainTag = CoaliChainTag;
-	type WeightInfo = ();
+	type Time = Timestamp;
+	// The electorate of each app is published by identity attesters, a key apart from the relayer.
+	type ElectorateOrigin = pallet_proof_of_trust::EnsureIdentityAttester<Runtime>;
+	type MinVotingPeriod = ConstU64<{ 3_600 * 1_000 }>;
+	type VoteGrace = ConstU64<{ 24 * 3_600 * 1_000 }>;
+	type MaxRevealsPerCall = ConstU32<100>;
+	type OnTrustChanged = ProofOfTrust;
+	type OnAttesterRemoved = ProofOfTrust;
+	type WeightInfo = pallet_coali_ledger::weights::Margin<pallet_coali_ledger::weights::SubstrateWeight<Runtime>, 3>;
 }
 
 pub struct CurrentAuthor;
@@ -254,9 +348,10 @@ impl frame_support::traits::Contains<AccountId> for ApprovedApps {
 }
 
 parameter_types! {
-	/// Total weight of a `record_vote` extrinsic (~908M) plus its length fee (~7.5%):
-	/// a vote then costs the target fee.
-	pub const ZoozReferenceWeight: u64 = 980_000_000;
+	/// Calibrated so that a 250-byte `record_vote` (1,656M ref_time with the benchmarked weights
+	/// and their margin, plus the extrinsic base weight and the length fee) costs the target fee;
+	/// checked by runtime/tests/fees.rs.
+	pub const ZoozReferenceWeight: u64 = 1_997_000_000;
 }
 
 impl pallet_zooz_economy::Config for Runtime {
@@ -365,8 +460,8 @@ impl pallet_token_allowlist::Config for Runtime {
 }
 
 /// Refuses token transfers and mints whose receiver is not allowed by the token's allowlist, and
-/// mints of tokens whose supply is locked.
-/// Root (`force_transfer` through sudo) is not filtered.
+/// mints of tokens whose supply is locked. `force_transfer` is the token admin's call (a plain
+/// signed account), so it is filtered like the others. Root (through sudo) is not filtered.
 pub struct TokenTransferRules;
 impl Contains<RuntimeCall> for TokenTransferRules {
 	fn contains(call: &RuntimeCall) -> bool {
@@ -376,6 +471,7 @@ impl Contains<RuntimeCall> for TokenTransferRules {
 			A::transfer { id, target, .. } | A::transfer_keep_alive { id, target, .. } => (id, target),
 			A::transfer_all { id, dest, .. } => (id, dest),
 			A::transfer_approved { id, destination, .. } => (id, destination),
+			A::force_transfer { id, dest, .. } => (id, dest),
 			A::mint { id, beneficiary, .. } => {
 				if !TokenAllowlist::can_mint(&id.0) {
 					return false;
@@ -389,4 +485,72 @@ impl Contains<RuntimeCall> for TokenTransferRules {
 			Err(_) => true,
 		}
 	}
+}
+
+parameter_types! {
+	// Deposits locked while a multisig operation or a proxy exists.
+	pub const MultisigDepositBase: Balance = 100 * MILLI_UNIT;
+	pub const MultisigDepositFactor: Balance = 10 * MILLI_UNIT;
+	pub const ProxyDepositBase: Balance = 100 * MILLI_UNIT;
+	pub const ProxyDepositFactor: Balance = 10 * MILLI_UNIT;
+	pub const AnnouncementDepositBase: Balance = 100 * MILLI_UNIT;
+	pub const AnnouncementDepositFactor: Balance = 10 * MILLI_UNIT;
+}
+
+/// Several keys approving one call: the target home of the sudo key (and later of governance).
+impl pallet_multisig::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type Currency = Balances;
+	type DepositBase = MultisigDepositBase;
+	type DepositFactor = MultisigDepositFactor;
+	type MaxSignatories = ConstU32<16>;
+	type WeightInfo = pallet_multisig::weights::SubstrateWeight<Runtime>;
+	type BlockNumberProvider = System;
+}
+
+/// What a proxy key may do on behalf of its account.
+#[derive(
+	Copy, Clone, Eq, PartialEq, Ord, PartialOrd, codec::Encode, codec::Decode,
+	codec::DecodeWithMemTracking, codec::MaxEncodedLen, Debug, scale_info::TypeInfo, Default,
+)]
+pub enum ProxyType {
+	/// Everything.
+	#[default]
+	Any,
+	/// Only `sudo(grandpa.note_stalled)`: lets the finality watchdog run with a key that can do
+	/// nothing else, while the sudo key stays offline.
+	FinalityWatchdog,
+}
+
+impl frame_support::traits::InstanceFilter<RuntimeCall> for ProxyType {
+	fn filter(&self, call: &RuntimeCall) -> bool {
+		match self {
+			ProxyType::Any => true,
+			ProxyType::FinalityWatchdog => matches!(
+				call,
+				RuntimeCall::Sudo(pallet_sudo::Call::sudo { call })
+					if matches!(**call, RuntimeCall::Grandpa(pallet_grandpa::Call::note_stalled { .. }))
+			),
+		}
+	}
+	fn is_superset(&self, other: &Self) -> bool {
+		self == &ProxyType::Any || self == other
+	}
+}
+
+impl pallet_proxy::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type Currency = Balances;
+	type ProxyType = ProxyType;
+	type ProxyDepositBase = ProxyDepositBase;
+	type ProxyDepositFactor = ProxyDepositFactor;
+	type MaxProxies = ConstU32<8>;
+	type WeightInfo = pallet_proxy::weights::SubstrateWeight<Runtime>;
+	type MaxPending = ConstU32<8>;
+	type CallHasher = sp_runtime::traits::BlakeTwo256;
+	type AnnouncementDepositBase = AnnouncementDepositBase;
+	type AnnouncementDepositFactor = AnnouncementDepositFactor;
+	type BlockNumberProvider = System;
 }

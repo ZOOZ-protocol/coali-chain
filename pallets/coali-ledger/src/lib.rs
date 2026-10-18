@@ -4,16 +4,22 @@
 //! in the Popolitica repository). Tallies are computed off-chain; this pallet records
 //! what is needed to verify them:
 //!
-//! - decisions (an id and the hash of the question and options),
-//! - one vote commitment per voter address and decision, signed by the voter,
+//! - decisions: an id, the clear question and options, the time voting ends and the number
+//!   of eligible voters the app declares (it can only raise it, publicly),
+//! - one vote commitment per voter address and decision, signed by the voter, at most the
+//!   declared number of eligible voters, chained into an on-chain vote log,
 //! - trust given or revoked between trust addresses, signed by the truster,
-//! - successive Merkle snapshots of each decision tally; the final one closes it,
-//! - optionally, the clear text of a decision and the clear totals of a snapshot, accepted
-//!   only if they hash to the content hash and totals hash already recorded.
+//! - successive result snapshots: clear totals that must add up to the votes recorded on
+//!   chain, the vote log at that point and a Merkle root of the votes. The final one closes
+//!   the decision, and cannot come before voting ends.
 //!
-//! Only accounts registered as attesters can submit extrinsics. An attester vouches
-//! that the voter is eligible; the voter signature proves the voter key holder agreed.
-//! No personal data is stored: ids are opaque, votes are commitments.
+//! Only accounts registered as attesters (approved apps) can submit extrinsics, and only the
+//! attester that registered a decision can write to it. An attester vouches that the voter
+//! is eligible; the voter signature proves the voter key holder agreed. No personal data is
+//! stored: ids are opaque, votes are commitments.
+//!
+//! Decisions registered before runtime 204 have no end time, voter cap or vote log; their
+//! text and totals were published separately (`publish_content`, `publish_totals`).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -25,6 +31,9 @@ pub use pallet::*;
 mod mock;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
 
 pub mod weights;
 pub use weights::WeightInfo;
@@ -45,16 +54,55 @@ fn blake2_256(data: &[u8]) -> Hash32 {
 
 pub const VOTE_CONTEXT: &[u8] = b"coali/vote/v1";
 pub const TRUST_CONTEXT: &[u8] = b"coali/trust/v1";
+pub const VOTE_LOG_CONTEXT: &[u8] = b"coali/votelog/v1";
+/// Merkle scheme of snapshots published from runtime 204: leaf = blake2(0x00 ‖ voter ‖
+/// commitment), node = blake2(0x01 ‖ left ‖ right). Older snapshots used version 1 (no prefix).
+pub const MERKLE_VERSION: u8 = 2;
 
 /// Trust an account receives, read by the proof-of-trust validator selection.
 pub trait TrustScore<AccountId> {
 	/// Number of distinct accounts trusting `who`, in any category.
 	fn trust_received(who: &AccountId) -> u32;
+	/// Distinct accounts trusting `who`, in any category.
+	fn trusters_of(who: &AccountId) -> alloc::vec::Vec<AccountId>;
+	/// Distinct accounts that `who` trusts, in any category.
+	fn trusted_by(who: &AccountId) -> alloc::vec::Vec<AccountId>;
+}
+
+/// Told when the first trust from `truster` to `trusted` appears (in any category) and when the
+/// last one goes.
+pub trait OnTrustChanged<AccountId> {
+	fn pair_added(truster: &AccountId, trusted: &AccountId);
+	fn pair_removed(truster: &AccountId, trusted: &AccountId);
+}
+
+impl<AccountId> OnTrustChanged<AccountId> for () {
+	fn pair_added(_: &AccountId, _: &AccountId) {}
+	fn pair_removed(_: &AccountId, _: &AccountId) {}
+}
+
+/// Told when an attester is removed, so that what it vouched for elsewhere can be withdrawn.
+pub trait OnAttesterRemoved<AccountId> {
+	fn attester_removed(who: &AccountId);
+}
+
+impl<AccountId> OnAttesterRemoved<AccountId> for () {
+	fn attester_removed(_: &AccountId) {}
 }
 
 impl<T: Config> TrustScore<T::AccountId> for Pallet<T> {
 	fn trust_received(who: &T::AccountId) -> u32 {
 		TrustReceived::<T>::get(who)
+	}
+	fn trusters_of(who: &T::AccountId) -> alloc::vec::Vec<T::AccountId> {
+		TrustPairs::<T>::iter_key_prefix(who).collect()
+	}
+	fn trusted_by(who: &T::AccountId) -> alloc::vec::Vec<T::AccountId> {
+		let mut out: alloc::vec::Vec<T::AccountId> =
+			TrustEdges::<T>::iter_key_prefix((who,)).map(|(trusted, _)| trusted).collect();
+		out.sort();
+		out.dedup();
+		out
 	}
 }
 
@@ -77,11 +125,97 @@ impl<T: Config> frame_support::traits::EnsureOrigin<T::RuntimeOrigin> for Ensure
 	}
 }
 
+/// Parses canonical totals JSON, `{"<option id>":<votes>,...}` with keys in strictly increasing
+/// byte order, no spaces, printable ASCII keys without `"` or `\\`, and integers without leading
+/// zeros: the output of the protocol's canonical JSON for a tally. Returns (option, votes) pairs.
+pub fn parse_tally(json: &[u8]) -> Option<alloc::vec::Vec<(&[u8], u64)>> {
+	let mut out = alloc::vec::Vec::new();
+	let mut i = 0usize;
+	let next = |i: &mut usize| -> Option<u8> {
+		let c = *json.get(*i)?;
+		*i += 1;
+		Some(c)
+	};
+	if next(&mut i)? != b'{' {
+		return None;
+	}
+	if json.get(i) == Some(&b'}') {
+		return (i + 1 == json.len()).then_some(out);
+	}
+	loop {
+		if next(&mut i)? != b'"' {
+			return None;
+		}
+		let start = i;
+		loop {
+			match next(&mut i)? {
+				b'"' => break,
+				b'\\' => return None,
+				0x20..=0x7e => {},
+				_ => return None,
+			}
+		}
+		let key = &json[start..i - 1];
+		if key.is_empty() || out.last().is_some_and(|(p, _): &(&[u8], u64)| *p >= key) {
+			return None;
+		}
+		if next(&mut i)? != b':' {
+			return None;
+		}
+		let digits = i;
+		let mut value: u64 = 0;
+		while let Some(c @ b'0'..=b'9') = json.get(i).copied() {
+			value = value.checked_mul(10)?.checked_add((c - b'0') as u64)?;
+			i += 1;
+		}
+		let len = i - digits;
+		if len == 0 || (len > 1 && json[digits] == b'0') {
+			return None;
+		}
+		out.push((key, value));
+		match next(&mut i)? {
+			b',' => continue,
+			b'}' => return (i == json.len()).then_some(out),
+			_ => return None,
+		}
+	}
+}
+
+/// Sum of the votes in canonical totals JSON (see `parse_tally`).
+pub fn parse_totals(json: &[u8]) -> Option<u64> {
+	parse_tally(json)?.iter().try_fold(0u64, |sum, (_, n)| sum.checked_add(*n))
+}
+
+/// Vote commitment, as computed by the app: blake2_256("coali/commit/v1|<uuid>|<option>|<salt hex>"),
+/// where <uuid> is the decision id in lowercase 8-4-4-4-12 form.
+pub fn commitment_of(decision_id: &DecisionId, option: &[u8], salt_hex: &[u8]) -> Hash32 {
+	const HEX: &[u8; 16] = b"0123456789abcdef";
+	let mut buf = alloc::vec::Vec::with_capacity(16 + 36 + option.len() + salt_hex.len() + 2);
+	buf.extend_from_slice(b"coali/commit/v1|");
+	for (i, b) in decision_id.iter().enumerate() {
+		if matches!(i, 4 | 6 | 8 | 10) {
+			buf.push(b'-');
+		}
+		buf.push(HEX[(b >> 4) as usize]);
+		buf.push(HEX[(b & 15) as usize]);
+	}
+	buf.push(b'|');
+	buf.extend_from_slice(option);
+	buf.push(b'|');
+	buf.extend_from_slice(salt_hex);
+	blake2_256(&buf)
+}
+
+/// Option id of a revealed vote.
+pub type MaxOptionLen = frame_support::traits::ConstU32<64>;
+/// Salt of a revealed vote, as 64 lowercase hex characters.
+pub type SaltHex = [u8; 64];
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
 	use alloc::vec::Vec;
-	use frame_support::pallet_prelude::*;
+	use frame_support::{pallet_prelude::*, traits::UnixTime};
 	use frame_system::pallet_prelude::*;
 	use sp_runtime::traits::{IdentifyAccount, Verify};
 
@@ -114,6 +248,15 @@ pub mod pallet {
 		pub closed: bool,
 	}
 
+	/// Rules of a decision registered from runtime 204.
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+	pub struct DecisionRules {
+		/// Unix time (ms) when voting ends; no final snapshot before. `None`: no end set.
+		pub ends_at: Option<u64>,
+		/// Eligible voters declared by the app; no more votes than this are accepted.
+		pub max_voters: u32,
+	}
+
 	#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
 	pub struct VoteRecord<BlockNumber> {
 		pub commitment: Hash32,
@@ -127,6 +270,34 @@ pub mod pallet {
 		pub totals_hash: Hash32,
 		pub is_final: bool,
 		pub published_at: BlockNumber,
+	}
+
+	/// One vote opened after the decision closed: its option and salt, checked against the
+	/// commitment recorded at voting time.
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, Debug, TypeInfo)]
+	pub struct Reveal<AccountId> {
+		pub voter: AccountId,
+		pub option: BoundedVec<u8, MaxOptionLen>,
+		pub salt: SaltHex,
+	}
+
+	/// Result of the chain's own count, once every vote of a closed decision was revealed.
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+	pub struct Recount {
+		/// The final totals published by the app equal the chain's count, option by option.
+		pub matches: bool,
+		pub votes: u32,
+	}
+
+	/// What the chain itself checked when a snapshot was published (runtime 204 and later).
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+	pub struct SnapshotProof {
+		/// Votes recorded on chain for the decision; the totals add up to this.
+		pub vote_count: u32,
+		/// The decision's vote log at that point (`None` for decisions registered before 204).
+		pub vote_log: Option<Hash32>,
+		/// Merkle scheme of `merkle_root` (see `MERKLE_VERSION`).
+		pub merkle_version: u8,
 	}
 
 	#[pallet::pallet]
@@ -144,6 +315,23 @@ pub mod pallet {
 		/// Domain separator included in every signed payload, unique per network.
 		#[pallet::constant]
 		type ChainTag: Get<[u8; 8]>;
+		/// Current time, to enforce decision end times.
+		type Time: UnixTime;
+		/// Publishes the electorate of each app (identity attesters, a key apart from the apps'
+		/// relayers); it caps the voters an app can declare for a decision.
+		type ElectorateOrigin: EnsureOrigin<Self::RuntimeOrigin, Success = Self::AccountId>;
+		/// Shortest voting period from registration (or from rules set on an older decision), ms.
+		#[pallet::constant]
+		type MinVotingPeriod: Get<u64>;
+		/// How long after the end votes are still accepted (votes deduced from a board become
+		/// official at the end and reach the chain shortly after), ms.
+		#[pallet::constant]
+		type VoteGrace: Get<u64>;
+		/// Votes revealed per call.
+		#[pallet::constant]
+		type MaxRevealsPerCall: Get<u32>;
+		type OnTrustChanged: OnTrustChanged<Self::AccountId>;
+		type OnAttesterRemoved: OnAttesterRemoved<Self::AccountId>;
 		type WeightInfo: WeightInfo;
 	}
 
@@ -159,6 +347,11 @@ pub mod pallet {
 		OptionQuery,
 	>;
 
+	/// End time and voter cap of decisions registered from runtime 204.
+	#[pallet::storage]
+	pub type DecisionRulesOf<T: Config> =
+		StorageMap<_, Blake2_128Concat, DecisionId, DecisionRules, OptionQuery>;
+
 	#[pallet::storage]
 	pub type Votes<T: Config> = StorageDoubleMap<
 		_,
@@ -172,6 +365,12 @@ pub mod pallet {
 
 	#[pallet::storage]
 	pub type VoteCount<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, u32, ValueQuery>;
+
+	/// Running hash of the votes of a decision, in recording order:
+	/// `log = blake2(VOTE_LOG_CONTEXT ‖ log ‖ voter ‖ commitment ‖ kind)`, starting from zero.
+	/// Kept for decisions registered from runtime 204.
+	#[pallet::storage]
+	pub type VoteLog<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, Hash32, OptionQuery>;
 
 	/// (truster, trusted, category) -> block of the trust.
 	#[pallet::storage]
@@ -217,8 +416,46 @@ pub mod pallet {
 		OptionQuery,
 	>;
 
+	/// Checks made by the chain on snapshots published from runtime 204.
+	#[pallet::storage]
+	pub type SnapshotProofs<T: Config> =
+		StorageDoubleMap<_, Blake2_128Concat, DecisionId, Twox64Concat, u32, SnapshotProof, OptionQuery>;
+
 	#[pallet::storage]
 	pub type LatestSnapshot<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, u32, OptionQuery>;
+
+	/// Electorate of an app (eligible voters), published by an identity attester. No decision of
+	/// that app may declare more voters.
+	#[pallet::storage]
+	pub type Electorate<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+	/// Votes of a closed decision already revealed.
+	#[pallet::storage]
+	pub type Revealed<T: Config> =
+		StorageDoubleMap<_, Blake2_128Concat, DecisionId, Blake2_128Concat, T::AccountId, (), OptionQuery>;
+
+	#[pallet::storage]
+	pub type RevealedCount<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, u32, ValueQuery>;
+
+	/// The chain's own count of revealed votes, per option.
+	#[pallet::storage]
+	pub type RevealedTally<T: Config> = StorageDoubleMap<
+		_,
+		Blake2_128Concat,
+		DecisionId,
+		Blake2_128Concat,
+		BoundedVec<u8, MaxOptionLen>,
+		u32,
+		ValueQuery,
+	>;
+
+	/// Set once every vote of a closed decision is revealed.
+	#[pallet::storage]
+	pub type RecountOf<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, Recount, OptionQuery>;
+
+	/// Sequence number of a decision's final snapshot.
+	#[pallet::storage]
+	pub type FinalSnapshot<T: Config> = StorageMap<_, Blake2_128Concat, DecisionId, u32, OptionQuery>;
 
 	/// Clear content of a decision, matching its `content_hash`.
 	#[pallet::storage]
@@ -258,6 +495,8 @@ pub mod pallet {
 		AttesterAdded { who: T::AccountId },
 		AttesterRemoved { who: T::AccountId },
 		DecisionRegistered { decision_id: DecisionId, content_hash: Hash32, category: u32 },
+		/// Rules of a decision registered from runtime 204 (also emitted when the cap is raised).
+		DecisionRulesSet { decision_id: DecisionId, ends_at: Option<u64>, max_voters: u32 },
 		VoteRecorded { decision_id: DecisionId, voter: T::AccountId, commitment: Hash32, kind: VoteKind },
 		TrustRecorded {
 			truster: T::AccountId,
@@ -273,8 +512,20 @@ pub mod pallet {
 			totals_hash: Hash32,
 			is_final: bool,
 		},
+		/// Checked by the chain for snapshots published from runtime 204.
+		SnapshotChecked {
+			decision_id: DecisionId,
+			seq: u32,
+			vote_count: u32,
+			vote_log: Option<Hash32>,
+			merkle_version: u8,
+		},
 		ContentPublished { decision_id: DecisionId },
 		TotalsPublished { decision_id: DecisionId, seq: u32 },
+		ElectorateSet { app: T::AccountId, voters: u32 },
+		VotesRevealed { decision_id: DecisionId, count: u32 },
+		/// Every vote revealed: the chain's count, compared with the final totals.
+		ResultRecounted { decision_id: DecisionId, votes: u32, matches: bool },
 	}
 
 	#[pallet::error]
@@ -298,6 +549,37 @@ pub mod pallet {
 		ContentMismatch,
 		TotalsMismatch,
 		AlreadyPublished,
+		/// Only the attester that registered the decision can write to it.
+		NotRegistrar,
+		/// More votes than the eligible voters declared for the decision.
+		TooManyVotes,
+		/// The voter cap can only go up.
+		CapLowered,
+		/// A final snapshot before the decision's end time.
+		VotingNotEnded,
+		/// Totals are not canonical JSON `{"option":votes,...}`.
+		BadTotals,
+		/// The totals do not add up to the votes recorded on chain.
+		TotalsNotVoteCount,
+		/// Only for decisions or snapshots from before runtime 204.
+		NotLegacy,
+		/// More voters than the app's published electorate.
+		AboveElectorate,
+		/// The end of voting must leave at least `MinVotingPeriod`.
+		VotingTooShort,
+		/// The decision has no rules yet (registered before 204): set them first.
+		NoRules,
+		/// Rules are already set.
+		RulesExist,
+		/// Voting ended (grace period included), or the cap cannot change after the end.
+		VotingEnded,
+		/// Votes are revealed once the decision is closed.
+		NotClosed,
+		UnknownVote,
+		AlreadyRevealed,
+		/// The option and salt do not match the commitment recorded for this vote.
+		RevealMismatch,
+		TooManyReveals,
 	}
 
 	#[pallet::call]
@@ -312,26 +594,36 @@ pub mod pallet {
 			Ok(())
 		}
 
+		/// Removes an attester and withdraws what it vouched for (`OnAttesterRemoved`).
 		#[pallet::call_index(1)]
 		#[pallet::weight(T::WeightInfo::remove_attester())]
 		pub fn remove_attester(origin: OriginFor<T>, who: T::AccountId) -> DispatchResult {
 			T::AdminOrigin::ensure_origin(origin)?;
 			ensure!(Attesters::<T>::contains_key(&who), Error::<T>::UnknownAttester);
 			Attesters::<T>::remove(&who);
+			T::OnAttesterRemoved::attester_removed(&who);
 			Self::deposit_event(Event::AttesterRemoved { who });
 			Ok(())
 		}
 
+		/// Registers a decision with its clear content (canonical JSON of the question and
+		/// options, hashed on chain), the time voting ends (at least `MinVotingPeriod` from now)
+		/// and the number of eligible voters (at most the app's published electorate).
 		#[pallet::call_index(2)]
-		#[pallet::weight(T::WeightInfo::register_decision())]
+		#[pallet::weight(T::WeightInfo::register_decision(content.len() as u32))]
 		pub fn register_decision(
 			origin: OriginFor<T>,
 			decision_id: DecisionId,
-			content_hash: Hash32,
+			content: BoundedVec<u8, MaxContentLen>,
 			category: u32,
+			ends_at: u64,
+			max_voters: u32,
 		) -> DispatchResult {
 			let attester = Self::ensure_attester(origin)?;
 			ensure!(!Decisions::<T>::contains_key(decision_id), Error::<T>::DecisionExists);
+			Self::check_rules(&attester, ends_at, max_voters)?;
+			let ends_at = Some(ends_at);
+			let content_hash = blake2_256(&content);
 			Decisions::<T>::insert(
 				decision_id,
 				DecisionInfo {
@@ -342,7 +634,12 @@ pub mod pallet {
 					closed: false,
 				},
 			);
+			DecisionRulesOf::<T>::insert(decision_id, DecisionRules { ends_at, max_voters });
+			VoteLog::<T>::insert(decision_id, [0u8; 32]);
+			DecisionContent::<T>::insert(decision_id, content);
 			Self::deposit_event(Event::DecisionRegistered { decision_id, content_hash, category });
+			Self::deposit_event(Event::DecisionRulesSet { decision_id, ends_at, max_voters });
+			Self::deposit_event(Event::ContentPublished { decision_id });
 			Ok(())
 		}
 
@@ -356,15 +653,25 @@ pub mod pallet {
 			kind: VoteKind,
 			voter_signature: T::Signature,
 		) -> DispatchResult {
-			Self::ensure_attester(origin)?;
+			let attester = Self::ensure_attester(origin)?;
 			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
 			ensure!(!decision.closed, Error::<T>::DecisionClosed);
 			ensure!(!Votes::<T>::contains_key(decision_id, &voter), Error::<T>::AlreadyVoted);
+
+			let count = VoteCount::<T>::get(decision_id).checked_add(1).ok_or(Error::<T>::Overflow)?;
+			let rules = DecisionRulesOf::<T>::get(decision_id).ok_or(Error::<T>::NoRules)?;
+			ensure!(count <= rules.max_voters, Error::<T>::TooManyVotes);
+			if let Some(ends_at) = rules.ends_at {
+				ensure!(Self::now() <= ends_at.saturating_add(T::VoteGrace::get()), Error::<T>::VotingEnded);
+			}
 
 			let payload = Self::vote_payload(&decision_id, &voter, &commitment, kind);
 			ensure!(voter_signature.verify(&payload[..], &voter), Error::<T>::BadVoterSignature);
 
-			let count = VoteCount::<T>::get(decision_id).checked_add(1).ok_or(Error::<T>::Overflow)?;
+			if let Some(log) = VoteLog::<T>::get(decision_id) {
+				VoteLog::<T>::insert(decision_id, Self::next_vote_log(&log, &voter, &commitment, kind));
+			}
 			Votes::<T>::insert(
 				decision_id,
 				&voter,
@@ -399,10 +706,11 @@ pub mod pallet {
 					ensure!(!TrustEdges::<T>::contains_key(&key), Error::<T>::AlreadyTrusted);
 					TrustEdges::<T>::insert(&key, frame_system::Pallet::<T>::block_number());
 					let categories = TrustPairs::<T>::get(&trusted, &truster);
+					TrustPairs::<T>::insert(&trusted, &truster, categories.saturating_add(1));
 					if categories == 0 {
 						TrustReceived::<T>::mutate(&trusted, |n| *n = n.saturating_add(1));
+						T::OnTrustChanged::pair_added(&truster, &trusted);
 					}
-					TrustPairs::<T>::insert(&trusted, &truster, categories.saturating_add(1));
 				},
 				TrustAction::Revoke => {
 					ensure!(TrustEdges::<T>::contains_key(&key), Error::<T>::TrustNotFound);
@@ -411,6 +719,7 @@ pub mod pallet {
 					if categories == 0 {
 						TrustPairs::<T>::remove(&trusted, &truster);
 						TrustReceived::<T>::mutate(&trusted, |n| *n = n.saturating_sub(1));
+						T::OnTrustChanged::pair_removed(&truster, &trusted);
 					} else {
 						TrustPairs::<T>::insert(&trusted, &truster, categories);
 					}
@@ -422,18 +731,23 @@ pub mod pallet {
 			Ok(())
 		}
 
+		/// Publishes a result snapshot with its clear totals. The totals must add up to the
+		/// votes recorded on chain; the chain stores their hash, the vote count and the vote
+		/// log beside the Merkle root (`MERKLE_VERSION`). The final snapshot closes the decision
+		/// and is refused before the decision's end time.
 		#[pallet::call_index(5)]
-		#[pallet::weight(T::WeightInfo::publish_snapshot())]
+		#[pallet::weight(T::WeightInfo::publish_snapshot(totals.len() as u32))]
 		pub fn publish_snapshot(
 			origin: OriginFor<T>,
 			decision_id: DecisionId,
 			seq: u32,
 			merkle_root: Hash32,
-			totals_hash: Hash32,
+			totals: BoundedVec<u8, MaxTotalsLen>,
 			is_final: bool,
 		) -> DispatchResult {
-			Self::ensure_attester(origin)?;
+			let attester = Self::ensure_attester(origin)?;
 			let mut decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
 			ensure!(!decision.closed, Error::<T>::DecisionClosed);
 
 			let expected = match LatestSnapshot::<T>::get(decision_id) {
@@ -442,6 +756,19 @@ pub mod pallet {
 			};
 			ensure!(seq == expected, Error::<T>::SnapshotOutOfOrder);
 
+			if is_final {
+				let rules = DecisionRulesOf::<T>::get(decision_id).ok_or(Error::<T>::NoRules)?;
+				if let Some(ends_at) = rules.ends_at {
+					ensure!(Self::now() >= ends_at, Error::<T>::VotingNotEnded);
+				}
+			}
+
+			let vote_count = VoteCount::<T>::get(decision_id);
+			let sum = parse_totals(&totals).ok_or(Error::<T>::BadTotals)?;
+			ensure!(sum == vote_count as u64, Error::<T>::TotalsNotVoteCount);
+
+			let totals_hash = blake2_256(&totals);
+			let vote_log = VoteLog::<T>::get(decision_id);
 			Snapshots::<T>::insert(
 				decision_id,
 				seq,
@@ -452,10 +779,17 @@ pub mod pallet {
 					published_at: frame_system::Pallet::<T>::block_number(),
 				},
 			);
+			SnapshotProofs::<T>::insert(
+				decision_id,
+				seq,
+				SnapshotProof { vote_count, vote_log, merkle_version: MERKLE_VERSION },
+			);
+			SnapshotTotals::<T>::insert(decision_id, seq, totals);
 			LatestSnapshot::<T>::insert(decision_id, seq);
 			if is_final {
 				decision.closed = true;
 				Decisions::<T>::insert(decision_id, decision);
+				FinalSnapshot::<T>::insert(decision_id, seq);
 			}
 			Self::deposit_event(Event::SnapshotPublished {
 				decision_id,
@@ -464,11 +798,19 @@ pub mod pallet {
 				totals_hash,
 				is_final,
 			});
+			Self::deposit_event(Event::SnapshotChecked {
+				decision_id,
+				seq,
+				vote_count,
+				vote_log,
+				merkle_version: MERKLE_VERSION,
+			});
+			Self::deposit_event(Event::TotalsPublished { decision_id, seq });
 			Ok(())
 		}
 
-		/// Publishes the clear content of a registered decision. Rejected unless its
-		/// blake2-256 equals the decision's `content_hash`.
+		/// Publishes the clear content of a decision registered before runtime 204. Rejected
+		/// unless its blake2-256 equals the decision's `content_hash`.
 		#[pallet::call_index(6)]
 		#[pallet::weight(T::WeightInfo::publish_content(content.len() as u32))]
 		pub fn publish_content(
@@ -476,8 +818,9 @@ pub mod pallet {
 			decision_id: DecisionId,
 			content: BoundedVec<u8, MaxContentLen>,
 		) -> DispatchResult {
-			Self::ensure_attester(origin)?;
+			let attester = Self::ensure_attester(origin)?;
 			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
 			ensure!(!DecisionContent::<T>::contains_key(decision_id), Error::<T>::AlreadyPublished);
 			ensure!(blake2_256(&content) == decision.content_hash, Error::<T>::ContentMismatch);
 			DecisionContent::<T>::insert(decision_id, content);
@@ -485,8 +828,8 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Publishes the clear totals of a snapshot. Rejected unless their blake2-256
-		/// equals the snapshot's `totals_hash`.
+		/// Publishes the clear totals of a snapshot published before runtime 204. Rejected
+		/// unless their blake2-256 equals the snapshot's `totals_hash`.
 		#[pallet::call_index(7)]
 		#[pallet::weight(T::WeightInfo::publish_totals(totals.len() as u32))]
 		pub fn publish_totals(
@@ -495,7 +838,9 @@ pub mod pallet {
 			seq: u32,
 			totals: BoundedVec<u8, MaxTotalsLen>,
 		) -> DispatchResult {
-			Self::ensure_attester(origin)?;
+			let attester = Self::ensure_attester(origin)?;
+			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
 			let snapshot = Snapshots::<T>::get(decision_id, seq).ok_or(Error::<T>::UnknownSnapshot)?;
 			ensure!(!SnapshotTotals::<T>::contains_key(decision_id, seq), Error::<T>::AlreadyPublished);
 			ensure!(blake2_256(&totals) == snapshot.totals_hash, Error::<T>::TotalsMismatch);
@@ -503,9 +848,113 @@ pub mod pallet {
 			Self::deposit_event(Event::TotalsPublished { decision_id, seq });
 			Ok(())
 		}
+
+		/// Raises the declared number of eligible voters of an open decision (registrar only).
+		/// Public: every change is an event.
+		#[pallet::call_index(8)]
+		#[pallet::weight(T::WeightInfo::raise_max_voters())]
+		pub fn raise_max_voters(origin: OriginFor<T>, decision_id: DecisionId, max_voters: u32) -> DispatchResult {
+			let attester = Self::ensure_attester(origin)?;
+			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
+			ensure!(!decision.closed, Error::<T>::DecisionClosed);
+			let mut rules = DecisionRulesOf::<T>::get(decision_id).ok_or(Error::<T>::NoRules)?;
+			ensure!(max_voters >= rules.max_voters, Error::<T>::CapLowered);
+			ensure!(max_voters <= Electorate::<T>::get(&attester), Error::<T>::AboveElectorate);
+			if let Some(ends_at) = rules.ends_at {
+				ensure!(Self::now() < ends_at, Error::<T>::VotingEnded);
+			}
+			rules.max_voters = max_voters;
+			let ends_at = rules.ends_at;
+			DecisionRulesOf::<T>::insert(decision_id, rules);
+			Self::deposit_event(Event::DecisionRulesSet { decision_id, ends_at, max_voters });
+			Ok(())
+		}
+
+		/// Publishes the electorate of an app (identity attester only).
+		#[pallet::call_index(9)]
+		#[pallet::weight(T::WeightInfo::set_electorate())]
+		pub fn set_electorate(origin: OriginFor<T>, app: T::AccountId, voters: u32) -> DispatchResult {
+			T::ElectorateOrigin::ensure_origin(origin)?;
+			Electorate::<T>::insert(&app, voters);
+			Self::deposit_event(Event::ElectorateSet { app, voters });
+			Ok(())
+		}
+
+		/// Gives a decision registered before runtime 204 its end time and voter cap, under the
+		/// same constraints as a new decision. Until then it takes no vote and cannot close.
+		#[pallet::call_index(10)]
+		#[pallet::weight(T::WeightInfo::set_rules())]
+		pub fn set_rules(origin: OriginFor<T>, decision_id: DecisionId, ends_at: u64, max_voters: u32) -> DispatchResult {
+			let attester = Self::ensure_attester(origin)?;
+			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
+			ensure!(!decision.closed, Error::<T>::DecisionClosed);
+			ensure!(!DecisionRulesOf::<T>::contains_key(decision_id), Error::<T>::RulesExist);
+			Self::check_rules(&attester, ends_at, max_voters)?;
+			ensure!(VoteCount::<T>::get(decision_id) <= max_voters, Error::<T>::TooManyVotes);
+			DecisionRulesOf::<T>::insert(decision_id, DecisionRules { ends_at: Some(ends_at), max_voters });
+			Self::deposit_event(Event::DecisionRulesSet { decision_id, ends_at: Some(ends_at), max_voters });
+			Ok(())
+		}
+
+		/// Opens votes of a closed decision: each option and salt must match the commitment
+		/// recorded at voting time. When every vote is revealed, the chain compares its own count
+		/// with the final totals (`RecountOf`).
+		#[pallet::call_index(11)]
+		#[pallet::weight(T::WeightInfo::reveal_votes(reveals.len() as u32))]
+		pub fn reveal_votes(
+			origin: OriginFor<T>,
+			decision_id: DecisionId,
+			reveals: alloc::vec::Vec<Reveal<T::AccountId>>,
+		) -> DispatchResult {
+			let attester = Self::ensure_attester(origin)?;
+			ensure!(reveals.len() as u32 <= T::MaxRevealsPerCall::get(), Error::<T>::TooManyReveals);
+			let decision = Decisions::<T>::get(decision_id).ok_or(Error::<T>::UnknownDecision)?;
+			ensure!(decision.registered_by == attester, Error::<T>::NotRegistrar);
+			ensure!(decision.closed, Error::<T>::NotClosed);
+			for r in &reveals {
+				let vote = Votes::<T>::get(decision_id, &r.voter).ok_or(Error::<T>::UnknownVote)?;
+				ensure!(!Revealed::<T>::contains_key(decision_id, &r.voter), Error::<T>::AlreadyRevealed);
+				ensure!(commitment_of(&decision_id, &r.option, &r.salt) == vote.commitment, Error::<T>::RevealMismatch);
+				Revealed::<T>::insert(decision_id, &r.voter, ());
+				RevealedTally::<T>::mutate(decision_id, &r.option, |n| *n = n.saturating_add(1));
+			}
+			let revealed = RevealedCount::<T>::get(decision_id).saturating_add(reveals.len() as u32);
+			RevealedCount::<T>::insert(decision_id, revealed);
+			Self::deposit_event(Event::VotesRevealed { decision_id, count: reveals.len() as u32 });
+			let votes = VoteCount::<T>::get(decision_id);
+			if revealed == votes {
+				let matches = FinalSnapshot::<T>::get(decision_id)
+					.and_then(|seq| SnapshotTotals::<T>::get(decision_id, seq))
+					.and_then(|t| {
+						parse_tally(&t).map(|pairs| {
+							pairs.iter().all(|(option, n)| {
+								BoundedVec::<u8, MaxOptionLen>::try_from(option.to_vec())
+									.map(|o| RevealedTally::<T>::get(decision_id, &o) as u64 == *n)
+									.unwrap_or(false)
+							}) && pairs.iter().map(|(_, n)| *n).sum::<u64>() == votes as u64
+						})
+					})
+					.unwrap_or(false);
+				RecountOf::<T>::insert(decision_id, Recount { matches, votes });
+				Self::deposit_event(Event::ResultRecounted { decision_id, votes, matches });
+			}
+			Ok(())
+		}
 	}
 
 	impl<T: Config> Pallet<T> {
+		pub(crate) fn now() -> u64 {
+			T::Time::now().as_millis().min(u64::MAX as u128) as u64
+		}
+
+		fn check_rules(attester: &T::AccountId, ends_at: u64, max_voters: u32) -> DispatchResult {
+			ensure!(ends_at >= Self::now().saturating_add(T::MinVotingPeriod::get()), Error::<T>::VotingTooShort);
+			ensure!(max_voters <= Electorate::<T>::get(attester), Error::<T>::AboveElectorate);
+			Ok(())
+		}
+
 		fn ensure_attester(origin: OriginFor<T>) -> Result<T::AccountId, DispatchError> {
 			let who = ensure_signed(origin)?;
 			ensure!(Attesters::<T>::contains_key(&who), Error::<T>::NotAttester);
@@ -531,6 +980,17 @@ pub mod pallet {
 			nonce: u32,
 		) -> Vec<u8> {
 			(TRUST_CONTEXT, T::ChainTag::get(), truster, trusted, category, action, nonce).encode()
+		}
+
+		/// Next value of a decision's vote log.
+		pub fn next_vote_log(log: &Hash32, voter: &T::AccountId, commitment: &Hash32, kind: VoteKind) -> Hash32 {
+			let mut buf = Vec::with_capacity(VOTE_LOG_CONTEXT.len() + 32 + 32 + 32 + 1);
+			buf.extend_from_slice(VOTE_LOG_CONTEXT);
+			buf.extend_from_slice(log);
+			buf.extend_from_slice(voter.encode().as_slice());
+			buf.extend_from_slice(commitment);
+			buf.extend_from_slice(&kind.encode());
+			blake2_256(&buf)
 		}
 	}
 }

@@ -1,0 +1,14 @@
+# Relayer, on a validator server (no public HTTP service): it shares the network namespace of
+# the local validator container to reach its RPC on 127.0.0.1:9944, which is not exposed.
+# Expects relayer.env next to this file (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CHAIN_NETWORK,
+# CHAIN_TAG, ATTESTER_URI, VOTER_MASTER_SEED; mode 600) and the relayer sources in ./src.
+# See security/AUDIT-PRE-2026-10.md (ZOOZ-08).
+services:
+  relayer:
+    build: ./src
+    container_name: coali-relayer
+    restart: unless-stopped
+    env_file: relayer.env
+    environment:
+      CHAIN_WS: ws://127.0.0.1:9944
+    network_mode: "container:coali-validator"

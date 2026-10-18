@@ -17,9 +17,17 @@ const spec = JSON.parse(readFileSync(specPath, "utf8"));
 const top = spec.genesis.raw.top;
 if (!code || code.length < 1000) throw new Error("live runtime code not found");
 top["0x3a636f6465"] = code;
-// Pallets the live runtime does not have yet must not exist in genesis either.
-const newPallets = ["Assets", "Nfts", "TokenAllowlist"].map((p) => xxhashAsHex(p, 128));
-for (const key of Object.keys(top)) if (newPallets.some((p) => key.startsWith(p))) delete top[key];
+// Pallets and storage the live runtime does not have yet must not exist in genesis either
+// (runtime 204: multisig, proxy, session history, offences; proof-of-trust identity attesters
+// and storage version 1, so that its v0 -> v1 migration runs).
+const pallet = (p) => xxhashAsHex(p, 128);
+const item = (p, i) => pallet(p) + xxhashAsHex(i, 128).slice(2);
+const drop = [
+  ...["Multisig", "Proxy", "Historical", "Offences"].map(pallet),
+  item("ProofOfTrust", "IdentityAttesters"),
+  pallet("ProofOfTrust") + xxhashAsHex(":__STORAGE_VERSION__:", 128).slice(2),
+];
+for (const key of Object.keys(top)) if (drop.some((p) => key.startsWith(p))) delete top[key];
 // Genesis records the new version as already applied, which would skip the upgrade migrations.
 delete top[xxhashAsHex("System", 128) + xxhashAsHex("LastRuntimeUpgrade", 128).slice(2)];
 writeFileSync(outPath, JSON.stringify(spec));
