@@ -187,3 +187,53 @@ Correctif recommandé (robuste, au lieu d'une liste de sosies forcément incompl
 2. Ajouter aux **mots réservés du nom** les tickers USDT, USDC, BUSD, BTC, WBTC, ETH, WETH, BNB, DOT,
    KSM, SOL, XRP, en mots entiers (pour ne pas bloquer « Bethléem » à cause de ETH).
 3. Même règle dans le SDK (`isReservedName`), et un test pour chaque variante du tableau.
+
+## Verdict final des auditeurs (18/10, 22 h 40) — remplace la section « ❌ TOK-05 encore contournable » ci-dessus
+
+Commits vérifiés : `3d45380` (coali-chain) et `7bd7594` (zooz-network).
+
+| Point | Résultat |
+|---|---|
+| Tests | 118 tests Rust + 47 tests SDK verts |
+| TOK-05 | ✅ Corrigé : liste blanche d'écritures. 23 cas indépendants (`security/simulations/token_lookalikes_v3.rs`) : les 18 usurpations sont refusées (petites capitales, lettres entourées, double barre, Z barré, cherokee, exposants, `USDT`/`ETH`/`Wrapped BTC` en nom, ZOOZ coupé par espaces ou emojis, accents, `S0L`, symbole en minuscules, latin étendu-B, IPA, « Zoozle ») ; les 5 noms légitimes sont acceptés (hébreu + emoji, arabe, accents et guillemets, emoji famille, « Solar Dots ») |
+| Déménagement | ✅ 5 noms `*.testnet.zooz.network` avec certificats Let's Encrypt (jusqu'en janvier 2027), en-têtes de sécurité, 404 sur les fichiers sensibles ; anciens noms en 301 ; RPC servi sous les deux noms |
+| Limite de débit | ✅ Sur les deux noms RPC, avec ou sans en-tête `Forwarded` falsifié (`security/simulations/rpc-ratelimit-both-names.mjs`) |
+| Serveurs | ✅ Validateurs : ports 22 et 30333 seulement, SSH par clé uniquement |
+
+### Résiduel — Basse (à corriger quand vous voulez, ne bloque pas la publication)
+Six noms passent encore et évoquent une grande crypto, sans reproduire « ZOOZ » :
+`USְDT` et `ETְH` (un signe diacritique hébreu, presque invisible, coupe le mot), `USD₮` (signe
+utilisé par le logo de Tether), `₿ Wrapped` (signe du Bitcoin), `Z٥٥Z` (chiffre arabe ٥, qui
+ressemble à « o »), `U.S.D.T` (points). Le badge « Non vérifié » reste affiché sur chacun.
+Correctifs : signes diacritiques hébreux et arabes acceptés seulement après une lettre de la même
+écriture ; ₮ lu T et ₿ lu B ; chiffres arabes U+0660–0669 et U+06F0–06F9 lus comme chiffres ; lettres
+isolées séparées par des points réunies en un mot avant la comparaison.
+
+### Reste à faire avant ou juste après la publication
+- **DNS `zooz.network`** : DMARC (`_dmarc` en `p=quarantine`, puis `p=reject`) et CAA
+  (`0 issue "letsencrypt.org"`) — absents aujourd'hui, à ajouter chez OVH.
+- **Build reproductible** : le hash local du wasm 205 n'est pas reproductible ; publier le hash
+  produit par le job `srtool` de la CI, et c'est ce wasm-là qui doit être déployé.
+- Déployer le runtime 205, le nouveau `zooz.network` et l'explorateur, puis rejouer ces simulations
+  en ligne.
+
+**Verdict : prêt à publier et à présenter à une société d'audit externe**, une fois les DNS ajoutés.
+
+### Résiduel corrigé (18/10, 23 h) — prêt
+
+Les six noms du résiduel sont refusés (runtime et SDK, mêmes règles) :
+- signes hébreux U+0591–05C7 et arabes (U+0610–061A, U+064B–065F, U+0670, U+06D6–06ED)
+  acceptés seulement juste après une lettre de la même écriture : `USְDT`, `ETְH` refusés,
+  « שָׁלוֹם » et « مَرْحَبًا » acceptés ;
+- `₮` lu T (`USD₮` → USDT) ; `₿` refusé dans les noms ;
+- chiffres arabes U+0660–0669 et U+06F0–06F9 lus comme chiffres, sauf ٥ / ۵ lus O et ٧ / ۷ lus V
+  (`Z٥٥Z` refusé, « Club ٢٠٢٦ » accepté) ;
+- les lettres ne sont regroupées qu'aux espaces pour former les mots (`U.S.D.T` → USDT) et les
+  lettres isolées qui se suivent sont réunies (`U S D T` → USDT ; « A B Club » accepté).
+
+Vérifié : `token_lookalikes_v3.rs` ajouté aux tests → 23/23 conformes et les 6 cas du résiduel
+refusés ; `token_attacks.rs` t01 : 38 noms refusés, 13 acceptés ; SDK : 60 tests (un par variante) ;
+clippy `-D warnings` propre.
+
+DNS `zooz.network` : la zone est chez Cloudflare, et la clé API du dépôt n'y a pas accès ; les
+enregistrements DMARC et CAA sont à ajouter par le propriétaire du compte.

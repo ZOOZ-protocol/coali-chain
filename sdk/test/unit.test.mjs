@@ -33,6 +33,15 @@ const REFUSED_NAMES = [
   ["name ETH, symbol ETH2", "ETH", "ETH2"],
   ["SOL as a word", "Sol club", "SOLC"],
   ["S0L as a word", "Club S0L", "CLB"],
+  ["Hebrew point splitting USDT", "US\u05B0DT", "AC1"],
+  ["Hebrew point splitting ETH", "ET\u05B0H", "AC2"],
+  ["Tether sign", "USD₮", "AC3"],
+  ["Bitcoin sign", "₿ Wrapped", "AC4"],
+  ["Arabic-Indic five for O", "Z\u0665\u0665Z", "AC5"],
+  ["dotted letters", "U.S.D.T", "AC6"],
+  ["spaced single letters", "U S D T coin", "AC7"],
+  ["Hebrew point without a letter", "\u05B0Club", "AC8"],
+  ["Arabic vowel sign after Latin", "Club\u064E", "AC9"],
   ["space in symbol", "Club", "CL B"],
   ["accent in symbol", "Club", "CLÉ"],
   ["empty symbol", "Club", ""],
@@ -48,6 +57,10 @@ const ALLOWED_NAMES = [
   ["emoji sequence with joiners", "Famille 👨\u200D👩\u200D👧", "FAM"],
   ["punctuation and currency", "Café « Le Soleil » – 10 ₪", "CAFE"],
   ["coin symbols inside longer words", "Solar Dots", "SOLAR"],
+  ["vowelled Hebrew", "שָׁלוֹם", "SHALOM"],
+  ["vowelled Arabic", "مَرْحَبًا", "MARHABA"],
+  ["Arabic-Indic year", "Club ٢٠٢٦", "Y2026"],
+  ["two single letters", "A B Club", "ABC"],
 ];
 for (const [label, name, symbol] of REFUSED_NAMES)
   test(`token name refused: ${label} (${name} / ${symbol})`, () => assert.equal(isReservedName(name, symbol), true));

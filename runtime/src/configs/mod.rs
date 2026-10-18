@@ -476,10 +476,18 @@ const LATIN_EXT_A: &[u8; 128] =
 /// What a character of a token name is, for the name rule.
 #[derive(Clone, Copy, PartialEq)]
 enum NameChar {
-	/// A Latin letter or digit, as the capital or digit it shows.
+	/// A Latin letter or digit (or a sign that reads as one), as the capital or digit it shows.
 	Latin(u8),
-	/// Hebrew, Arabic, punctuation, space, currency sign: allowed, separates words.
+	/// A space: ends a word and a group of letters.
+	Space,
+	/// Punctuation, currency sign: ends a word, not a group of letters.
 	Other,
+	HebrewLetter,
+	/// Hebrew points and accents, allowed only after a Hebrew letter.
+	HebrewMark,
+	ArabicLetter,
+	/// Arabic vowel signs and marks, allowed only after an Arabic letter.
+	ArabicMark,
 	Emoji,
 	/// Variation selector or zero-width joiner, allowed only inside an emoji sequence.
 	Joiner,
@@ -491,19 +499,37 @@ enum NameChar {
 fn name_char(c: char) -> Option<NameChar> {
 	use NameChar::*;
 	let cp = c as u32;
+	// Arabic-Indic digits read as digits, except those that pass for letters (٥ for O, ٧ for V).
+	let arabic_digit = |d: u32| match d {
+		5 => Latin(b'O'),
+		7 => Latin(b'V'),
+		d => Latin(b'0' + d as u8),
+	};
 	Some(match cp {
 		0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A => Latin((cp as u8).to_ascii_uppercase()),
-		0x20..=0x7E => Other,
+		0x20 | 0xA0 => Space,
+		0x21..=0x7E => Other,
 		0xAA | 0xAD | 0xB2 | 0xB3 | 0xB5 | 0xB9 | 0xBA => return None,
-		0xA0..=0xBF => Other,
+		0xA1..=0xBF => Other,
 		0xC0..=0xFF => match LATIN_1[(cp - 0xC0) as usize] {
 			b'*' => Other,
 			b => Latin(b),
 		},
 		0x100..=0x17F => Latin(LATIN_EXT_A[(cp - 0x100) as usize]),
-		0x590..=0x5FF => Other,
-		0x600..=0x605 | 0x61C | 0x6DD => return None,
-		0x600..=0x6FF => Other,
+		0x591..=0x5BD | 0x5BF | 0x5C1 | 0x5C2 | 0x5C4 | 0x5C5 | 0x5C7 => HebrewMark,
+		0x5BE | 0x5C0 | 0x5C3 | 0x5C6 | 0x5F3 | 0x5F4 => Other,
+		0x5D0..=0x5EA | 0x5EF..=0x5F2 => HebrewLetter,
+		0x660..=0x669 => arabic_digit(cp - 0x660),
+		0x6F0..=0x6F9 => arabic_digit(cp - 0x6F0),
+		0x610..=0x61A | 0x64B..=0x65F | 0x670 | 0x6D6..=0x6DC | 0x6DF..=0x6E4 | 0x6E7 | 0x6E8 |
+		0x6EA..=0x6ED => ArabicMark,
+		0x606..=0x60F | 0x61B | 0x61D..=0x61F | 0x66A..=0x66D | 0x6D4 | 0x6DE | 0x6E9 | 0x6FD | 0x6FE =>
+			Other,
+		0x620..=0x64A | 0x66E | 0x66F | 0x671..=0x6D3 | 0x6D5 | 0x6E5 | 0x6E6 | 0x6EE | 0x6EF |
+		0x6FA..=0x6FC | 0x6FF => ArabicLetter,
+		// ₮ is Tether's sign; ₿ is Bitcoin's.
+		0x20AE => Latin(b'T'),
+		0x20BF => return None,
 		0x2010..=0x2027 | 0x2030..=0x205E | 0x20A0..=0x20C0 => Other,
 		0x2600..=0x27BF | 0x1F300..=0x1FAFF => Emoji,
 		0x200D | 0xFE0F => Joiner,
@@ -511,34 +537,65 @@ fn name_char(c: char) -> Option<NameChar> {
 	})
 }
 
-/// The Latin words of a name (digits 0 and 1 read as O and I), and all its Latin letters run
-/// together; None if the name is not valid UTF-8 or uses a character outside the allowlist.
+/// The Latin words of a name and all its Latin letters run together (digits 0 and 1 read as O
+/// and I). Words are split by anything that is not a Latin letter; groups of letters only by
+/// spaces (so `U.S.D.T` is the word USDT), and runs of single letters are joined (`U S D T`).
+/// None if the name is not valid UTF-8 or uses a character outside the allowlist.
 fn name_skeleton(text: &[u8]) -> Option<(alloc::vec::Vec<alloc::vec::Vec<u8>>, alloc::vec::Vec<u8>)> {
+	use alloc::vec::Vec;
+	use NameChar::*;
 	let text = core::str::from_utf8(text).ok()?;
-	let (mut words, mut all, mut word) = (alloc::vec::Vec::new(), alloc::vec::Vec::new(), alloc::vec::Vec::new());
-	let mut in_emoji = false;
+	let (mut words, mut all, mut word, mut group, mut groups) =
+		(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::<Vec<u8>>::new());
+	let mut prev: Option<NameChar> = None;
 	for c in text.chars() {
 		let class = name_char(c)?;
+		let follows = |allowed: &[NameChar]| prev.is_some_and(|p| allowed.contains(&p));
 		match class {
-			NameChar::Latin(b) => {
-				let b = match b {
-					b'0' => b'O',
-					b'1' => b'I',
-					b => b,
-				};
-				word.push(b);
-				all.push(b);
-			},
-			NameChar::Joiner if !in_emoji => return None,
-			_ =>
-				if !word.is_empty() {
-					words.push(core::mem::take(&mut word));
-				},
+			Joiner if !follows(&[Emoji, Joiner]) => return None,
+			HebrewMark if !follows(&[HebrewLetter, HebrewMark]) => return None,
+			ArabicMark if !follows(&[ArabicLetter, ArabicMark]) => return None,
+			_ => {},
 		}
-		in_emoji = matches!(class, NameChar::Emoji | NameChar::Joiner);
+		if let Latin(b) = class {
+			let b = match b {
+				b'0' => b'O',
+				b'1' => b'I',
+				b => b,
+			};
+			word.push(b);
+			group.push(b);
+			all.push(b);
+		} else {
+			if !word.is_empty() {
+				words.push(core::mem::take(&mut word));
+			}
+			if class == Space && !group.is_empty() {
+				groups.push(core::mem::take(&mut group));
+			}
+		}
+		prev = Some(class);
 	}
 	if !word.is_empty() {
 		words.push(word);
+	}
+	if !group.is_empty() {
+		groups.push(group);
+	}
+	let mut single_letters = Vec::new();
+	for g in groups {
+		if g.len() == 1 {
+			single_letters.extend_from_slice(&g);
+			continue;
+		}
+		if single_letters.len() > 1 {
+			words.push(core::mem::take(&mut single_letters));
+		}
+		single_letters.clear();
+		words.push(g);
+	}
+	if single_letters.len() > 1 {
+		words.push(single_letters);
 	}
 	Some((words, all))
 }

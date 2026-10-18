@@ -485,45 +485,93 @@ const LATIN_1 = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTSAAAAAAACEEEEIIIIDNOOOOO*OUUUUYT
 const LATIN_EXT_A =
   "AAAAAACCCCCCCCDDDDEEEEEEEEEEGGGGGGGGHHHHIIIIIIIIIIIIJJKKKLLLLLLLLLLNNNNNNNNNOOOOOOOORRRRRRSSSSSSSSTTTTTTUUUUUUUUUUUUWWYYYZZZZZZS";
 
-type NameChar = { latin: string } | "other" | "emoji" | "joiner" | null;
+type NameChar =
+  | { latin: string }
+  | "space"
+  | "other"
+  | "hebrewLetter"
+  | "hebrewMark"
+  | "arabicLetter"
+  | "arabicMark"
+  | "emoji"
+  | "joiner"
+  | null;
 
 function nameChar(cp: number): NameChar {
   const within = (a: number, b: number) => cp >= a && cp <= b;
+  const any = (...xs: (number | [number, number])[]) => xs.some((x) => (typeof x === "number" ? cp === x : within(x[0], x[1])));
+  // Arabic-Indic digits read as digits, except those that pass for letters (٥ for O, ٧ for V).
+  const arabicDigit = (d: number): NameChar => ({ latin: d === 5 ? "O" : d === 7 ? "V" : String(d) });
   if (within(0x30, 0x39) || within(0x41, 0x5a) || within(0x61, 0x7a)) return { latin: String.fromCharCode(cp).toUpperCase() };
-  if (within(0x20, 0x7e)) return "other";
-  if ([0xaa, 0xad, 0xb2, 0xb3, 0xb5, 0xb9, 0xba].includes(cp)) return null;
-  if (within(0xa0, 0xbf)) return "other";
+  if (cp === 0x20 || cp === 0xa0) return "space";
+  if (within(0x21, 0x7e)) return "other";
+  if (any(0xaa, 0xad, 0xb2, 0xb3, 0xb5, 0xb9, 0xba)) return null;
+  if (within(0xa1, 0xbf)) return "other";
   if (within(0xc0, 0xff)) return LATIN_1[cp - 0xc0] === "*" ? "other" : { latin: LATIN_1[cp - 0xc0] };
   if (within(0x100, 0x17f)) return { latin: LATIN_EXT_A[cp - 0x100] };
-  if (within(0x590, 0x5ff)) return "other";
-  if (within(0x600, 0x605) || cp === 0x61c || cp === 0x6dd) return null;
-  if (within(0x600, 0x6ff)) return "other";
+  if (any([0x591, 0x5bd], 0x5bf, 0x5c1, 0x5c2, 0x5c4, 0x5c5, 0x5c7)) return "hebrewMark";
+  if (any(0x5be, 0x5c0, 0x5c3, 0x5c6, 0x5f3, 0x5f4)) return "other";
+  if (any([0x5d0, 0x5ea], [0x5ef, 0x5f2])) return "hebrewLetter";
+  if (within(0x660, 0x669)) return arabicDigit(cp - 0x660);
+  if (within(0x6f0, 0x6f9)) return arabicDigit(cp - 0x6f0);
+  if (any([0x610, 0x61a], [0x64b, 0x65f], 0x670, [0x6d6, 0x6dc], [0x6df, 0x6e4], 0x6e7, 0x6e8, [0x6ea, 0x6ed])) return "arabicMark";
+  if (any([0x606, 0x60f], 0x61b, [0x61d, 0x61f], [0x66a, 0x66d], 0x6d4, 0x6de, 0x6e9, 0x6fd, 0x6fe)) return "other";
+  if (any([0x620, 0x64a], 0x66e, 0x66f, [0x671, 0x6d3], 0x6d5, 0x6e5, 0x6e6, 0x6ee, 0x6ef, [0x6fa, 0x6fc], 0x6ff)) return "arabicLetter";
+  // ₮ is Tether's sign; ₿ is Bitcoin's.
+  if (cp === 0x20ae) return { latin: "T" };
+  if (cp === 0x20bf) return null;
   if (within(0x2010, 0x2027) || within(0x2030, 0x205e) || within(0x20a0, 0x20c0)) return "other";
   if (within(0x2600, 0x27bf) || within(0x1f300, 0x1faff)) return "emoji";
   if (cp === 0x200d || cp === 0xfe0f) return "joiner";
   return null;
 }
 
-/** Latin words of a name (0 read as O, 1 as I) and all its Latin letters together, or null. */
+/**
+ * Latin words of a name and all its Latin letters together (0 read as O, 1 as I), or null. Words
+ * are split by anything that is not a Latin letter; groups of letters only by spaces (`U.S.D.T`
+ * is the word USDT), and runs of single letters are joined (`U S D T`).
+ */
 function nameSkeleton(text: string): { words: string[]; all: string } | null {
   const words: string[] = [];
+  const groups: string[] = [];
   let all = "";
   let word = "";
-  let inEmoji = false;
+  let group = "";
+  let prev: NameChar = null;
   for (const ch of text) {
     const c = nameChar(ch.codePointAt(0)!);
-    if (c === null || (c === "joiner" && !inEmoji)) return null;
+    if (c === null) return null;
+    if (c === "joiner" && prev !== "emoji" && prev !== "joiner") return null;
+    if (c === "hebrewMark" && prev !== "hebrewLetter" && prev !== "hebrewMark") return null;
+    if (c === "arabicMark" && prev !== "arabicLetter" && prev !== "arabicMark") return null;
     if (typeof c === "object") {
       const l = c.latin === "0" ? "O" : c.latin === "1" ? "I" : c.latin;
       word += l;
+      group += l;
       all += l;
-    } else if (word) {
-      words.push(word);
+    } else {
+      if (word) words.push(word);
       word = "";
+      if (c === "space" && group) {
+        groups.push(group);
+        group = "";
+      }
     }
-    inEmoji = c === "emoji" || c === "joiner";
+    prev = c;
   }
   if (word) words.push(word);
+  if (group) groups.push(group);
+  let singles = "";
+  for (const g of groups) {
+    if (g.length === 1) {
+      singles += g;
+      continue;
+    }
+    if (singles.length > 1) words.push(singles);
+    singles = "";
+    words.push(g);
+  }
+  if (singles.length > 1) words.push(singles);
   return { words, all };
 }
 

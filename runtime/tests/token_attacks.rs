@@ -96,6 +96,15 @@ fn t01_reserved_names_are_refused() {
 			("ETH", "ETH2"),
 			("Sol club", "SOLC"),
 			("Club S0L", "CLB"),
+			("US\u{05B0}DT", "AC1"),
+			("ET\u{05B0}H", "AC2"),
+			("USD₮", "AC3"),
+			("₿ Wrapped", "AC4"),
+			("Z\u{0665}\u{0665}Z", "AC5"),
+			("U.S.D.T", "AC6"),
+			("U S D T coin", "AC7"),
+			("\u{05B0}Club", "AC8"),
+			("Club\u{064E}", "AC9"),
 			("Club", "CL B"),
 			("Club", "CLÉ"),
 			("Club", ""),
@@ -114,6 +123,10 @@ fn t01_reserved_names_are_refused() {
 			("Famille 👨\u{200D}👩\u{200D}👧", "FAM"),
 			("Café « Le Soleil » – 10 ₪", "CAFE"),
 			("Solar Dots", "SOLAR"),
+			("שָׁלוֹם", "SHALOM"),
+			("مَرْحَبًا", "MARHABA"),
+			("Club ٢٠٢٦", "Y2026"),
+			("A B Club", "ABC"),
 		] {
 			assert!(named(name.as_bytes(), symbol.as_bytes()), "{name} / {symbol} should be allowed");
 		}
