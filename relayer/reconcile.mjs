@@ -152,6 +152,40 @@ for (const r of pendingTrusts.filter((r) => r.status !== "pending" || r.attempts
   problem("trust", `row ${r.id}: ${r.status} (attempts ${r.attempts}) ${r.last_error ?? ""}`);
 summary.trusts = { queue: trustRows.length, waitingForBatch: pendingTrusts.length, activeExpected: expected, activeOnChain: chainEdges.size };
 
+// ---------------------------------------------------------------- trust per category (runtime 207)
+// Every counter must equal the edges behind it: per domain across apps, per position in the app
+// that recorded it, and the app's active trusts per category must equal the chain's.
+if (L.trustReceivedIn) {
+  const positions = new Set((await L.categories.entries()).filter(([, v]) => v.unwrap().kind.isPosition).map(([k]) => k.args[0].toNumber()));
+  const edgeApp = new Map((await L.trustEdgeApp.entries()).map(([k, v]) => [`${k.args[0]}|${k.args[1]}|${k.args[2].toNumber()}`, v.unwrap().toString()]));
+  const expectIn = new Map(), expectFor = new Map(), expectUse = new Map(), appPerCategory = new Map();
+  const bump = (m, k) => m.set(k, (m.get(k) ?? 0) + 1);
+  for (const key of chainEdges) {
+    const [, trusted, category] = key.split("|");
+    bump(expectUse, category);
+    const app = edgeApp.get(key);
+    if (app) bump(expectFor, `${trusted}|${app}|${category}`);
+    else bump(expectIn, `${trusted}|${category}`);
+    if (positions.has(Number(category)) !== Boolean(app)) problem("category", `edge ${key}: ${app ? "counted per app" : "counted as a domain"} but category ${category} is a ${positions.has(Number(category)) ? "position" : "domain"}`);
+  }
+  for (const [key, r] of last) if (r.payload.action === "Give") bump(appPerCategory, key.split("|")[2]);
+  const compare = (what, expected, entries, keyOf) => {
+    const seen = new Set();
+    for (const [k, v] of entries) {
+      const key = keyOf(k);
+      seen.add(key);
+      if ((expected.get(key) ?? 0) !== v.toNumber()) problem("category", `${what} ${key}: chain ${v.toNumber()}, edges ${expected.get(key) ?? 0}`);
+    }
+    for (const [key, n] of expected) if (!seen.has(key)) problem("category", `${what} ${key}: missing on chain (edges ${n})`);
+  };
+  compare("trustReceivedIn", expectIn, await L.trustReceivedIn.entries(), (k) => `${k.args[0]}|${k.args[1].toNumber()}`);
+  compare("trustReceivedFor", expectFor, await L.trustReceivedFor.entries(), (k) => `${k.args[0]}|${k.args[1]}|${k.args[2].toNumber()}`);
+  compare("categoryUse", expectUse, await L.categoryUse.entries(), (k) => `${k.args[0].toNumber()}`);
+  for (const [category, n] of appPerCategory)
+    if ((expectUse.get(category) ?? 0) < n) problem("category", `category ${category}: ${n} active trusts in the app, ${expectUse.get(category) ?? 0} on chain`);
+  summary.trustPerCategory = Object.fromEntries([...expectUse].sort((a, b) => a[0] - b[0]).map(([c, n]) => [c, { onChain: n, app: appPerCategory.get(c) ?? 0, position: positions.has(Number(c)) }]));
+}
+
 console.log(JSON.stringify(summary, null, 2));
 console.log(problems.length ? `${problems.length} mismatch(es):\n${problems.join("\n")}` : "everything matches");
 process.exit(0);

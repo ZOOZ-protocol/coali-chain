@@ -15,4 +15,5 @@ export {
   type Hex,
 } from "./proofs.js";
 export { formatZooz, parseZooz } from "./format.js";
+export * from "./categories.js";
 export * from "./explorer.js";

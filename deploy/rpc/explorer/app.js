@@ -21,6 +21,38 @@ function setLang(l) {
 }
 const t = (en, fr) => (L === "fr" ? fr : en);
 
+// ---------- categories ----------
+// Names of the common category list (sdk/src/categories.ts, docs/CATEGORIES.md); the chain's
+// registry (/categories) says which are positions and adds any new ones by key.
+const CAT_NAMES = {
+  1: ["Economy", "Économie"], 2: ["Security", "Sécurité"], 3: ["Education", "Éducation"], 4: ["Health", "Santé"],
+  5: ["Justice", "Justice"], 6: ["Environment", "Environnement"], 7: ["Transport", "Transports"], 8: ["Housing", "Logement"],
+  9: ["Technology", "Technologie"], 10: ["Agriculture", "Agriculture"], 11: ["Energy", "Énergie"], 12: ["Culture", "Culture"],
+  13: ["Sports", "Sport"], 14: ["Tourism", "Tourisme"], 15: ["Science", "Science"], 16: ["Media", "Médias"],
+  17: ["Welfare", "Solidarité"], 18: ["Interior", "Intérieur"], 19: ["Foreign Affairs", "Affaires étrangères"],
+  20: ["Family", "Famille"], 21: ["General", "Général"], 22: ["Politics", "Politique"], 23: ["AI", "IA"],
+  24: ["Prime Minister", "Premier ministre"], 25: ["Supreme Court President", "Président de la Cour suprême"],
+  26: ["Supreme Court Justice", "Juge à la Cour suprême"], 27: ["Attorney General", "Conseiller juridique du gouvernement"],
+  28: ["State Attorney", "Procureur de l'État"], 29: ["Minister of Justice", "Ministre de la Justice"],
+  30: ["Public Diplomacy", "Diplomatie publique"], 31: ["Head of National Public Diplomacy", "Chef de la diplomatie publique"],
+  32: ["Foreign Minister", "Ministre des Affaires étrangères"], 33: ["Ambassador to the UN", "Ambassadeur à l'ONU"],
+  34: ["Ambassador to the US", "Ambassadeur aux États-Unis"], 35: ["Minister of Diaspora Affairs", "Ministre de la Diaspora"],
+  36: ["Army Spokesperson", "Porte-parole de l'armée"],
+};
+let CATS = null;
+async function categories() {
+  if (!CATS) CATS = Object.fromEntries(((await get("/categories").catch(() => [])) ?? []).map((c) => [c.id, c]));
+  return CATS;
+}
+function catName(id) {
+  const n = CAT_NAMES[id];
+  if (n) return t(n[0], n[1]);
+  const key = CATS?.[id]?.key;
+  return key ? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : `#${id}`;
+}
+const isPositionCat = (id) => CATS?.[id]?.kind === "position";
+const catLabel = (id) => `${esc(catName(Number(id)))}${isPositionCat(Number(id)) ? ` <span class="muted sm">(${t("position", "poste")})</span>` : ""}`;
+
 // ---------- helpers ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const app = () => document.getElementById("app");
@@ -280,11 +312,11 @@ function explain(x) {
           <p>${t("Type", "Type")} : ${JSON.stringify(d.kind).includes("Inferred") ? t("<b>vote from the voter's board</b> (deduced from the people they trust, then confirmed)", "<b>vote issu du board du votant</b> (déduit des personnes à qui il fait confiance, puis confirmé)") : t("<b>direct vote</b> (the voter chose themselves)", "<b>vote direct</b> (le votant a choisi lui-même)")}.</p>`);
         break;
       case "coaliLedger.TrustRecorded":
-        out.push(`<p class="lead">🤝 ${addr(d.truster)} ${isRevoke(d) ? t("withdrew their trust from", "a retiré sa confiance à") : t("gave their trust to", "a donné sa confiance à")} ${addr(d.trusted)}${d.category && d.category !== "0" ? ` <span class="muted">(${t("category", "catégorie")} #${esc(d.category)})</span>` : ""}.</p>
+        out.push(`<p class="lead">🤝 ${addr(d.truster)} ${isRevoke(d) ? t("withdrew their trust from", "a retiré sa confiance à") : t("gave their trust to", "a donné sa confiance à")} ${addr(d.trusted)}${d.category && d.category !== "0" ? ` <span class="muted">(${catLabel(d.category)})</span>` : ""}.</p>
           <p>${t("Trusts are public. They decide who represents whom, and who can become a validator (Proof of Trust). The addresses are pseudonymous: they do not reveal any name.", "Les trusts sont publics. Ils décident qui représente qui, et qui peut devenir validateur (Proof of Trust). Les adresses sont des pseudonymes : elles ne révèlent aucun nom.")}</p>`);
         break;
       case "coaliLedger.DecisionRegistered":
-        out.push(`<p class="lead">📄 ${t("A new decision was put to a vote", "Une nouvelle décision a été soumise au vote")} : ${decLink(d.decisionId, 8)} <span class="muted">(${t("category", "catégorie")} #${esc(d.category)})</span>.</p>
+        out.push(`<p class="lead">📄 ${t("A new decision was put to a vote", "Une nouvelle décision a été soumise au vote")} : ${decLink(d.decisionId, 8)} <span class="muted">(${catLabel(d.category)})</span>.</p>
           <p>${t("Its text has the fingerprint", "Son texte a l'empreinte")} <span class="mono sm">${esc(short(d.contentHash, 10))}</span>. ${t("If anyone changes even one letter of the text, the fingerprint no longer matches: the question cannot be modified after the vote starts.", "Si quelqu'un change une seule lettre du texte, l'empreinte ne correspond plus : la question ne peut pas être modifiée une fois le vote lancé.")}</p>`);
         break;
       case "coaliLedger.SnapshotPublished":
@@ -494,7 +526,10 @@ async function accountPage(id, p) {
     </div></div>
     <div class="card"><div class="card-h">${t("More Info", "Plus d'infos")}</div><div class="mini">
       <div><div class="k">${t("Role", "Rôle")}</div><div>${tags || `<span class="muted">${t("Regular account", "Compte standard")}</span>`}</div></div>
-      <div><div class="k">${t("Trusts received", "Trusts reçus")}</div><div>${num(a.trustReceived)}</div></div>
+      <div><div class="k">${t("Trusts received", "Trusts reçus")}</div><div>${num(a.trustReceived)} <span class="muted sm">${t("people", "personnes")}</span></div></div>
+      ${a.trustByCategory?.length ? `<div><div class="k">${t("By category", "Par catégorie")}</div><div>${a.trustByCategory
+        .map((c) => `${catLabel(c.category)} <b>${num(c.count)}</b>${c.app ? ` <span class="muted sm">${t("in", "dans")} ${addr(c.app, 6)}</span>` : ""}`)
+        .join("<br>")}</div></div>` : ""}
       <div><div class="k">${t("Transactions sent", "Transactions envoyées")}</div><div>${num(a.nonce)}${a.produced ? ` · ${num(a.produced)} ${t("blocks produced", "blocs produits")}` : ""}</div></div>
       ${a.candidateFor ? `<div><div class="k">${t("Linked person", "Personne liée")}</div><div>${addr(a.candidateFor)}</div></div>` : ""}
     </div></div>
@@ -550,7 +585,7 @@ async function decisionPage(id) {
     ${d.voteLog ? kvRow(t("Vote log", "Journal des votes"), `<span class="mono sm">${esc(d.voteLog)}</span>`, t("Running fingerprint of every vote, in order, computed by the chain itself", "Empreinte cumulée de chaque vote, dans l'ordre, calculée par la chaîne elle-même")) : ""}
     ${kvRow(t("Results", "Résultats"), fin ? `<span class="tag ok">${t("Final results anchored", "Résultats définitifs ancrés")}</span> ${t("block", "bloc")} ${blk(fin.n)}` : snaps.length ? `${snaps.length} ${t("interim snapshot(s)", "instantané(s) intermédiaire(s)")}` : t("Not published yet", "Pas encore publiés"))}
     ${kvRow(t("Registered", "Enregistrée"), `${t("block", "bloc")} ${blk(d.registeredAt)} ${reg ? `<span class="muted">(${ago(reg.ts)})</span>` : ""} ${t("by", "par")} ${addr(d.registeredBy)}`)}
-    ${kvRow(t("Category", "Catégorie"), `#${d.category}`)}
+    ${kvRow(t("Category", "Catégorie"), catLabel(d.category))}
     ${kvRow(t("Text fingerprint", "Empreinte du texte"), `<span class="mono">${esc(d.contentHash)}</span>`, t("blake2-256 hash of the decision content", "Hash blake2-256 du contenu de la décision"))}
   </div>
   ${snaps.length ? `<div class="card scroll" style="margin-top:18px"><div class="card-h">${t("Results anchored", "Résultats ancrés")}</div><table><thead><tr><th>${t("Snapshot", "Instantané")}</th><th>${t("Block", "Bloc")}</th><th>${t("Age", "Âge")}</th><th>${t("Merkle root (fingerprint of all votes)", "Racine de Merkle (empreinte de tous les votes)")}</th><th>${t("Status", "Statut")}</th><th></th></tr></thead><tbody>
@@ -630,8 +665,8 @@ async function votesPage(p) {
   const col = (e) => {
     const d = e.data;
     if (tab === "votes") return `<td>${decLink(d.decisionId)}</td><td>${addr(d.voter)}</td><td>${JSON.stringify(d.kind).includes("Inferred") ? `<span class="tag acc">${t("From board", "Via board")}</span>` : `<span class="tag">${t("Direct", "Direct")}</span>`}</td><td>🔒 <span class="muted">${t("sealed", "scellé")}</span></td>`;
-    if (tab === "trusts") return `<td>${addr(d.truster)}</td><td>${isRevoke(d) ? `<span class="tag bad">✕ ${t("withdrew", "retire")}</span>` : `<span class="arrow">→</span>`}</td><td>${addr(d.trusted)}</td><td>${d.category && d.category !== "0" ? "#" + esc(d.category) : `<span class="muted">${t("general", "générale")}</span>`}</td>`;
-    if (tab === "decisions") return `<td>${decLink(d.decisionId, 8)}</td><td>#${esc(d.category)}</td><td class="mono sm">${esc(short(d.contentHash, 10))}</td><td></td>`;
+    if (tab === "trusts") return `<td>${addr(d.truster)}</td><td>${isRevoke(d) ? `<span class="tag bad">✕ ${t("withdrew", "retire")}</span>` : `<span class="arrow">→</span>`}</td><td>${addr(d.trusted)}</td><td>${d.category && d.category !== "0" ? catLabel(d.category) : `<span class="muted">${t("general", "générale")}</span>`}</td>`;
+    if (tab === "decisions") return `<td>${decLink(d.decisionId, 8)}</td><td>${catLabel(d.category)}</td><td class="mono sm">${esc(short(d.contentHash, 10))}</td><td></td>`;
     if (tab === "results") return `<td>${decLink(d.decisionId, 8)}</td><td>#${esc(d.seq)}</td><td class="mono sm">${esc(short(d.merkleRoot, 10))}</td><td>${d.isFinal ? `<span class="tag ok">${t("final", "définitif")}</span>` : `<span class="tag">${t("interim", "intermédiaire")}</span>`}</td>`;
     return `<td>${addr(d.trustAddress)}</td><td>${d.verified ? `<span class="tag ok">🪪 ${t("verified", "vérifiée")}</span>` : `<span class="tag bad">${t("removed", "retirée")}</span>`}</td><td></td><td></td>`;
   };
@@ -800,6 +835,7 @@ async function route() {
   if (legacy) return go(`/block/${legacy[1]}`);
   if (new URLSearchParams(location.search).has("rpc")) return location.replace(APPS + location.hash);
   const p = Object.fromEntries(new URLSearchParams(location.search));
+  await categories().catch(() => {});
   const [, page, id] = location.pathname.split("/");
   if (page) document.getElementById("hero").innerHTML = "";
   window.scrollTo(0, 0);

@@ -425,6 +425,26 @@ const routes = {
     };
   },
 
+  // The chain's category registry (runtime 207) with the trusts recorded in each.
+  async categories() {
+    if (!api.query.coaliLedger.categories) return [];
+    const [entries, uses] = await Promise.all([api.query.coaliLedger.categories.entries(), api.query.coaliLedger.categoryUse.entries()]);
+    const used = new Map(uses.map(([k, v]) => [k.args[0].toNumber(), v.toNumber()]));
+    return entries
+      .map(([k, v]) => {
+        const c = v.unwrap();
+        const id = k.args[0].toNumber();
+        return {
+          id,
+          key: Buffer.from(c.key.toU8a(true)).toString("utf8"),
+          kind: c.kind.isPosition ? "position" : "domain",
+          domain: c.domain.isSome ? c.domain.unwrap().toNumber() : null,
+          trusts: used.get(id) ?? 0,
+        };
+      })
+      .sort((x, y) => x.id - y.id);
+  },
+
   blocks(p) {
     return q("SELECT * FROM blocks WHERE n < ? ORDER BY n DESC LIMIT ?").all(before(p.before), lim(p.limit))
       .map((b) => ({ ...b, ...earnings(b) }));
@@ -630,6 +650,15 @@ const routes = {
       api.query.session.validators(),
       api.query.coaliLedger.attesters(addr),
     ]);
+    // Per category from runtime 207: domains across apps, positions per app.
+    const [inDomains, forPositions] = await Promise.all([
+      api.query.coaliLedger.trustReceivedIn?.entries(addr) ?? [],
+      api.query.coaliLedger.trustReceivedFor?.entries(addr) ?? [],
+    ]);
+    const trustByCategory = [
+      ...inDomains.map(([k, v]) => ({ category: k.args[1].toNumber(), count: v.toNumber() })),
+      ...forPositions.map(([k, v]) => ({ category: k.args[2].toNumber(), count: v.toNumber(), app: encodeAddress(k.args[1], SS58) })),
+    ].sort((x, y) => y.count - x.count || x.category - y.category);
     const acts = q("SELECT n, x FROM acts WHERE addr=? AND n < ? ORDER BY n DESC, x DESC LIMIT ?")
       .all(addr, before(p.before), lim(p.limit));
     const history = acts.map(({ n, x }) => {
@@ -645,6 +674,7 @@ const routes = {
       nonce: info.nonce.toNumber(),
       verified: verified.isSome,
       trustReceived: trustReceived.toNumber(),
+      trustByCategory,
       verifiedTrust: verifiedTrust ? verifiedTrust.toNumber() : null,
       founder: founders.some((f) => f.eq(addr)),
       candidateFor: candidateTrust.isSome ? encodeAddress(candidateTrust.unwrap(), SS58) : null,
@@ -675,7 +705,7 @@ const routes = {
 
 // Responses are cached briefly per URL, and identical requests in flight share one computation,
 // so that heavy pages (stats counts, token holders) cost the same at 1 or 1,000 requests/s.
-const CACHE_TTL = { stats: 6_000, tokens: 30_000, collections: 30_000, token: 10_000, collection: 10_000, account: 6_000, decision: 6_000 };
+const CACHE_TTL = { stats: 6_000, tokens: 30_000, collections: 30_000, token: 10_000, collection: 10_000, account: 6_000, decision: 6_000, categories: 30_000 };
 const cache = new Map();
 function cached(key, ttl, compute) {
   const hit = cache.get(key);

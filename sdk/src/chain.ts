@@ -114,6 +114,39 @@ export async function trustReceived(api: ApiPromise, address: string): Promise<n
   return (await q(api).trustReceived(address)).toNumber();
 }
 
+/** Distinct accounts trusting `address` in a domain, through any app (runtime 207). */
+export async function trustReceivedIn(api: ApiPromise, address: string, domain: number): Promise<number> {
+  return (await q(api).trustReceivedIn(address, domain)).toNumber();
+}
+
+/** Distinct accounts trusting `address` for a position in one app (runtime 207). */
+export async function trustReceivedFor(api: ApiPromise, address: string, app: string, position: number): Promise<number> {
+  return (await q(api).trustReceivedFor(address, app, position)).toNumber();
+}
+
+export interface ChainCategory {
+  id: number;
+  key: string;
+  kind: "domain" | "position";
+  domain: number | null;
+}
+
+/** The chain's category registry (runtime 207), by id. */
+export async function getCategories(api: ApiPromise): Promise<ChainCategory[]> {
+  const entries = await q(api).categories.entries();
+  return entries
+    .map(([k, v]: [any, any]) => {
+      const c = v.unwrap();
+      return {
+        id: k.args[0].toNumber(),
+        key: new TextDecoder().decode(c.key.toU8a(true)),
+        kind: c.kind.isPosition ? ("position" as const) : ("domain" as const),
+        domain: c.domain.isSome ? c.domain.unwrap().toNumber() : null,
+      };
+    })
+    .sort((a: ChainCategory, b: ChainCategory) => a.id - b.id);
+}
+
 export interface Snapshot {
   seq: number;
   merkleRoot: Hex;

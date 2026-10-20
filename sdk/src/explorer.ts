@@ -131,6 +131,8 @@ export interface Account {
   verified: boolean;
   /** Number of distinct accounts trusting this one. */
   trustReceived: number;
+  /** Trust per category (runtime 207): per domain across apps, per position within one app. */
+  trustByCategory?: { category: number; count: number; app?: string }[];
   founder: boolean;
   candidateFor: string | null;
   offline: boolean;

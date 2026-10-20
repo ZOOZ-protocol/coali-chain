@@ -169,3 +169,29 @@ test("token amounts", async () => {
   assert.equal(fromUnits(100050n, 2), "1000.5");
   assert.equal(fromUnits("5", 0), "5");
 });
+
+// The common category list must be the chain's: same ids, keys and domains as DEFAULT_CATEGORIES
+// in pallets/coali-ledger/src/lib.rs (the registry seeded by runtime 207).
+test("category list matches the runtime registry", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { CATEGORIES, categoryName, isPosition } = await import("../dist/categories.js");
+  const src = await readFile(new URL("../../pallets/coali-ledger/src/lib.rs", import.meta.url), "utf8");
+  const block = src.slice(src.indexOf("pub const DEFAULT_CATEGORIES"), src.indexOf("];", src.indexOf("pub const DEFAULT_CATEGORIES")));
+  const runtime = [...block.matchAll(/\((\d+), b"([a-z_]+)", (None|Some\((\d+)\))\)/g)].map((m) => ({
+    id: Number(m[1]),
+    key: m[2],
+    domain: m[4] ? Number(m[4]) : undefined,
+  }));
+  assert.equal(runtime.length, 36);
+  assert.deepEqual(
+    CATEGORIES.map((c) => ({ id: c.id, key: c.key, domain: c.domain })),
+    runtime,
+  );
+  for (const c of CATEGORIES) {
+    assert.equal(c.kind === "position", c.domain !== undefined, c.key);
+    if (c.domain) assert.equal(CATEGORIES.find((x) => x.id === c.domain)?.kind, "domain", c.key);
+  }
+  assert.equal(categoryName(24, "fr"), "Premier ministre");
+  assert.equal(categoryName(99), "#99");
+  assert.ok(isPosition(24) && !isPosition(22));
+});
