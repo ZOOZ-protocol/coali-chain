@@ -8,7 +8,9 @@
 //!   of eligible voters the app declares (it can only raise it, publicly),
 //! - one vote commitment per voter address and decision, signed by the voter, at most the
 //!   declared number of eligible voters, chained into an on-chain vote log,
-//! - trust given or revoked between trust addresses, signed by the truster,
+//! - trust given or revoked between trust addresses, signed by the truster, in a category: a
+//!   domain (economy, justice…), counted across every app, or a position (prime minister…),
+//!   counted per app since a position belongs to the country or community of the app,
 //! - successive result snapshots: clear totals that must add up to the votes recorded on
 //!   chain, the vote log at that point and a Merkle root of the votes. The final one closes
 //!   the decision, and cannot come before voting ends.
@@ -43,6 +45,50 @@ pub use weights::WeightInfo;
 pub type DecisionId = [u8; 16];
 /// 32-byte hash (blake2-256 unless stated otherwise).
 pub type Hash32 = [u8; 32];
+
+/// Max size of a category key (`economy`, `prime_minister`…).
+pub type MaxCategoryKeyLen = frame_support::traits::ConstU32<32>;
+
+/// The common category list (`docs/CATEGORIES.md`), seeded by the v1 -> v2 migration:
+/// (id, key, domain of a position). Ids are the ones Popolitica already used on chain.
+pub const DEFAULT_CATEGORIES: &[(u32, &[u8], Option<u32>)] = &[
+	(1, b"economy", None),
+	(2, b"security", None),
+	(3, b"education", None),
+	(4, b"health", None),
+	(5, b"justice", None),
+	(6, b"environment", None),
+	(7, b"transport", None),
+	(8, b"housing", None),
+	(9, b"technology", None),
+	(10, b"agriculture", None),
+	(11, b"energy", None),
+	(12, b"culture", None),
+	(13, b"sports", None),
+	(14, b"tourism", None),
+	(15, b"science", None),
+	(16, b"media", None),
+	(17, b"welfare", None),
+	(18, b"interior", None),
+	(19, b"foreign", None),
+	(20, b"family", None),
+	(21, b"general", None),
+	(22, b"politics", None),
+	(23, b"ai", None),
+	(24, b"prime_minister", Some(22)),
+	(25, b"supreme_court_president", Some(5)),
+	(26, b"supreme_court_justice", Some(5)),
+	(27, b"attorney_general", Some(5)),
+	(28, b"state_attorney", Some(5)),
+	(29, b"justice_minister", Some(5)),
+	(30, b"public_diplomacy", None),
+	(31, b"national_hasbara_head", Some(30)),
+	(32, b"foreign_minister", Some(19)),
+	(33, b"un_ambassador", Some(19)),
+	(34, b"us_ambassador", Some(19)),
+	(35, b"diaspora_minister", Some(19)),
+	(36, b"army_spokesperson", Some(2)),
+];
 
 /// Max size of a decision's canonical JSON content (question and options).
 pub type MaxContentLen = frame_support::traits::ConstU32<8192>;
@@ -273,6 +319,25 @@ pub mod pallet {
 		pub published_at: BlockNumber,
 	}
 
+	#[derive(
+		Encode, Decode, DecodeWithMemTracking, Clone, Copy, PartialEq, Eq, Debug, TypeInfo,
+		MaxEncodedLen,
+	)]
+	pub enum CategoryKind {
+		/// A field of expertise, the same in every country: its trust is counted across apps.
+		Domain,
+		/// A post one runs for (prime minister…), within a domain; its trust is counted per app.
+		Position,
+	}
+
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+	pub struct CategoryInfo {
+		pub kind: CategoryKind,
+		/// The domain of a position (`None` for a domain).
+		pub domain: Option<u32>,
+		pub key: BoundedVec<u8, MaxCategoryKeyLen>,
+	}
+
 	/// One vote opened after the decision closed: its option and salt, checked against the
 	/// commitment recorded at voting time.
 	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, Debug, TypeInfo)]
@@ -301,8 +366,9 @@ pub mod pallet {
 		pub merkle_version: u8,
 	}
 
-	/// 1: the storage layout of runtime 204 (see `migrations`).
-	pub(crate) const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+	/// 1: the storage layout of runtime 204; 2: categories and trust counted per category
+	/// (runtime 207). See `migrations`.
+	pub(crate) const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
 	#[pallet::pallet]
 	#[pallet::storage_version(STORAGE_VERSION)]
@@ -407,6 +473,47 @@ pub mod pallet {
 	/// Number of distinct trusters of an account, whatever the category.
 	#[pallet::storage]
 	pub type TrustReceived<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+	/// The category registry (`DEFAULT_CATEGORIES`, then the admin origin). Trust in a category
+	/// that is not registered counts like trust in a domain.
+	#[pallet::storage]
+	pub type Categories<T: Config> = StorageMap<_, Twox64Concat, u32, CategoryInfo, OptionQuery>;
+
+	/// Trusts currently recorded in a category (every app, every trusted address).
+	#[pallet::storage]
+	pub type CategoryUse<T: Config> = StorageMap<_, Twox64Concat, u32, u32, ValueQuery>;
+
+	/// (trusted, domain) -> distinct trusters of `trusted` in that domain, through any app.
+	#[pallet::storage]
+	pub type TrustReceivedIn<T: Config> =
+		StorageDoubleMap<_, Blake2_128Concat, T::AccountId, Twox64Concat, u32, u32, ValueQuery>;
+
+	/// (trusted, app, position) -> distinct trusters of `trusted` for that position in that app.
+	#[pallet::storage]
+	pub type TrustReceivedFor<T: Config> = StorageNMap<
+		_,
+		(
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Twox64Concat, u32>,
+		),
+		u32,
+		ValueQuery,
+	>;
+
+	/// (truster, trusted, position) -> the app (attester) that recorded a trust in a position,
+	/// whose count it belongs to. Trusts in a domain have none.
+	#[pallet::storage]
+	pub type TrustEdgeApp<T: Config> = StorageNMap<
+		_,
+		(
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Twox64Concat, u32>,
+		),
+		T::AccountId,
+		OptionQuery,
+	>;
 
 	#[pallet::storage]
 	pub type Snapshots<T: Config> = StorageDoubleMap<
@@ -529,6 +636,7 @@ pub mod pallet {
 		VotesRevealed { decision_id: DecisionId, count: u32 },
 		/// Every vote revealed: the chain's count, compared with the final totals.
 		ResultRecounted { decision_id: DecisionId, votes: u32, matches: bool },
+		CategorySet { id: u32, kind: CategoryKind, domain: Option<u32> },
 	}
 
 	#[pallet::error]
@@ -583,6 +691,10 @@ pub mod pallet {
 		/// The option and salt do not match the commitment recorded for this vote.
 		RevealMismatch,
 		TooManyReveals,
+		/// A position needs a registered domain; a domain has none.
+		BadDomain,
+		/// A category in use (trusts recorded) cannot change kind.
+		CategoryInUse,
 	}
 
 	#[pallet::call]
@@ -686,7 +798,7 @@ pub mod pallet {
 		}
 
 		#[pallet::call_index(4)]
-		#[pallet::weight(T::WeightInfo::record_trust())]
+		#[pallet::weight(T::WeightInfo::record_trust().saturating_add(T::DbWeight::get().reads_writes(3, 3)))]
 		pub fn record_trust(
 			origin: OriginFor<T>,
 			truster: T::AccountId,
@@ -696,7 +808,7 @@ pub mod pallet {
 			nonce: u32,
 			truster_signature: T::Signature,
 		) -> DispatchResult {
-			Self::ensure_attester(origin)?;
+			let app = Self::ensure_attester(origin)?;
 			ensure!(truster != trusted, Error::<T>::SelfTrust);
 			ensure!(TrustNonces::<T>::get(&truster) == nonce, Error::<T>::BadTrustNonce);
 
@@ -708,6 +820,7 @@ pub mod pallet {
 				TrustAction::Give => {
 					ensure!(!TrustEdges::<T>::contains_key(&key), Error::<T>::AlreadyTrusted);
 					TrustEdges::<T>::insert(&key, frame_system::Pallet::<T>::block_number());
+					Self::count_trust(&key, Some(&app));
 					let categories = TrustPairs::<T>::get(&trusted, &truster);
 					TrustPairs::<T>::insert(&trusted, &truster, categories.saturating_add(1));
 					if categories == 0 {
@@ -718,6 +831,7 @@ pub mod pallet {
 				TrustAction::Revoke => {
 					ensure!(TrustEdges::<T>::contains_key(&key), Error::<T>::TrustNotFound);
 					TrustEdges::<T>::remove(&key);
+					Self::count_trust(&key, None);
 					let categories = TrustPairs::<T>::get(&trusted, &truster).saturating_sub(1);
 					if categories == 0 {
 						TrustPairs::<T>::remove(&trusted, &truster);
@@ -945,6 +1059,33 @@ pub mod pallet {
 			}
 			Ok(())
 		}
+
+		/// Adds or updates a category of the common list (admin origin). A position names its
+		/// domain. A category with trusts recorded keeps its kind, so that its counts stay right.
+		#[pallet::call_index(12)]
+		#[pallet::weight(Weight::from_parts(20_000_000, 1_000).saturating_add(T::DbWeight::get().reads_writes(3, 1)))]
+		pub fn set_category(
+			origin: OriginFor<T>,
+			id: u32,
+			kind: CategoryKind,
+			domain: Option<u32>,
+			key: BoundedVec<u8, MaxCategoryKeyLen>,
+		) -> DispatchResult {
+			T::AdminOrigin::ensure_origin(origin)?;
+			match (kind, domain) {
+				(CategoryKind::Domain, None) => {},
+				(CategoryKind::Position, Some(d)) => ensure!(
+					Categories::<T>::get(d).is_some_and(|c| c.kind == CategoryKind::Domain),
+					Error::<T>::BadDomain
+				),
+				_ => return Err(Error::<T>::BadDomain.into()),
+			}
+			let was = Categories::<T>::get(id).map_or(CategoryKind::Domain, |c| c.kind);
+			ensure!(was == kind || CategoryUse::<T>::get(id) == 0, Error::<T>::CategoryInUse);
+			Categories::<T>::insert(id, CategoryInfo { kind, domain, key });
+			Self::deposit_event(Event::CategorySet { id, kind, domain });
+			Ok(())
+		}
 	}
 
 	impl<T: Config> Pallet<T> {
@@ -962,6 +1103,41 @@ pub mod pallet {
 			let who = ensure_signed(origin)?;
 			ensure!(Attesters::<T>::contains_key(&who), Error::<T>::NotAttester);
 			Ok(who)
+		}
+
+		/// Whether trust in `category` is counted per app (a registered position).
+		pub fn is_position(category: u32) -> bool {
+			Categories::<T>::get(category).is_some_and(|c| c.kind == CategoryKind::Position)
+		}
+
+		/// Counts a trust edge given (`app`: the attester recording it) or revoked (`None`) in
+		/// the per-category counters. A revoked edge leaves the count it was added to.
+		pub(crate) fn count_trust(key: &(T::AccountId, T::AccountId, u32), app: Option<&T::AccountId>) {
+			let (truster, trusted, category) = key;
+			let category = *category;
+			match app {
+				Some(app) => {
+					CategoryUse::<T>::mutate(category, |n| *n = n.saturating_add(1));
+					if Self::is_position(category) {
+						TrustEdgeApp::<T>::insert(key, app);
+						TrustReceivedFor::<T>::mutate((trusted, app, category), |n| *n = n.saturating_add(1));
+					} else {
+						TrustReceivedIn::<T>::mutate(trusted, category, |n| *n = n.saturating_add(1));
+					}
+				},
+				None => {
+					CategoryUse::<T>::mutate_exists(category, |n| Self::decrement(n));
+					match TrustEdgeApp::<T>::take((truster, trusted, category)) {
+						Some(app) => TrustReceivedFor::<T>::mutate_exists((trusted, &app, category), |n| Self::decrement(n)),
+						None => TrustReceivedIn::<T>::mutate_exists(trusted, category, |n| Self::decrement(n)),
+					}
+				},
+			}
+		}
+
+		/// Lowers a counter by one, removing it at zero.
+		fn decrement(n: &mut Option<u32>) {
+			*n = n.map(|v| v.saturating_sub(1)).filter(|v| *v > 0);
 		}
 
 		/// Bytes the voter key signs for `record_vote`.

@@ -2,7 +2,8 @@ use crate::{
 	commitment_of, mock::*, parse_totals, DecisionContent, DecisionInfo, DecisionRules, DecisionRulesOf,
 	Decisions, Electorate, Error, Event, LatestSnapshot, RecountOf, Reveal, SnapshotInfo, SnapshotProofs,
 	SnapshotTotals, Snapshots, TrustAction, TrustEdges, TrustNonces, VoteCount, VoteKind, VoteLog, Votes,
-	MERKLE_VERSION,
+	MERKLE_VERSION, Categories, CategoryInfo, CategoryKind, CategoryUse, TrustEdgeApp, TrustReceivedFor,
+	TrustReceivedIn, DEFAULT_CATEGORIES,
 };
 use frame_support::{assert_noop, assert_ok, traits::Get, BoundedVec};
 use sp_core::Pair;
@@ -519,5 +520,149 @@ fn trust_received_counts_distinct_trusters() {
 		give("a", 2, TrustAction::Revoke, 3);
 		assert_eq!(Ledger::trust_received(&rep), 1);
 		assert!(Ledger::trusted_by(&account(&pair("a"))).is_empty());
+	});
+}
+
+fn seed_categories() {
+	use frame_support::traits::UncheckedOnRuntimeUpgrade;
+	crate::migrations::InnerMigrateV1ToV2::<Test>::on_runtime_upgrade();
+}
+
+/// `truster` gives (or revokes) trust to `trusted` in `category`, through `app`.
+fn trust_via(app: &AccountId32, truster: &str, trusted: &AccountId32, category: u32, action: TrustAction) {
+	let nonce = TrustNonces::<Test>::get(account(&pair(truster)));
+	let (who, sig) = signed_trust(truster, trusted, category, action, nonce);
+	assert_ok!(Ledger::record_trust(RuntimeOrigin::signed(app.clone()), who, trusted.clone(), category, action, nonce, sig));
+}
+
+const ECONOMY: u32 = 1;
+const EDUCATION: u32 = 3;
+const JUSTICE: u32 = 5;
+const POLITICS: u32 = 22;
+const PRIME_MINISTER: u32 = 24;
+
+#[test]
+fn trust_is_counted_per_domain_and_in_all() {
+	new_test_ext().execute_with(|| {
+		use crate::TrustScore;
+		seed_categories();
+		let rep = account(&pair("Rep"));
+		// 3 people trust Rep in economy, 5 in education; the 3 are among the 5.
+		for i in 0..5 {
+			let who = format!("p{i}");
+			trust_via(&attester(), &who, &rep, EDUCATION, TrustAction::Give);
+			if i < 3 {
+				trust_via(&attester(), &who, &rep, ECONOMY, TrustAction::Give);
+			}
+		}
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 3);
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, EDUCATION), 5);
+		assert_eq!(Ledger::trust_received(&rep), 5);
+		assert_eq!(CategoryUse::<Test>::get(ECONOMY), 3);
+
+		// A domain counts across apps: the same person through another app is not counted twice
+		// (the edge exists), a new person is.
+		let other = second_attester();
+		trust_via(&other, "p9", &rep, ECONOMY, TrustAction::Give);
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 4);
+
+		trust_via(&attester(), "p0", &rep, ECONOMY, TrustAction::Revoke);
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 3);
+		assert_eq!(Ledger::trust_received(&rep), 6);
+		for i in 1..3 {
+			trust_via(&attester(), &format!("p{i}"), &rep, ECONOMY, TrustAction::Revoke);
+		}
+		trust_via(&other, "p9", &rep, ECONOMY, TrustAction::Revoke);
+		assert!(!TrustReceivedIn::<Test>::contains_key(&rep, ECONOMY));
+		assert!(!CategoryUse::<Test>::contains_key(ECONOMY));
+	});
+}
+
+#[test]
+fn trust_in_a_position_is_counted_per_app() {
+	new_test_ext().execute_with(|| {
+		seed_categories();
+		let rep = account(&pair("Rep"));
+		let israel = attester();
+		let france = second_attester();
+		trust_via(&israel, "a", &rep, PRIME_MINISTER, TrustAction::Give);
+		trust_via(&israel, "b", &rep, PRIME_MINISTER, TrustAction::Give);
+		trust_via(&france, "c", &rep, PRIME_MINISTER, TrustAction::Give);
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &israel, PRIME_MINISTER)), 2);
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &france, PRIME_MINISTER)), 1);
+		// Not a domain count, not the domain of the position either.
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, PRIME_MINISTER), 0);
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, POLITICS), 0);
+
+		// Revoked through another app, the trust leaves the count of the app that recorded it.
+		trust_via(&france, "a", &rep, PRIME_MINISTER, TrustAction::Revoke);
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &israel, PRIME_MINISTER)), 1);
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &france, PRIME_MINISTER)), 1);
+		assert!(!TrustEdgeApp::<Test>::contains_key((account(&pair("a")), &rep, PRIME_MINISTER)));
+	});
+}
+
+#[test]
+fn the_admin_keeps_the_category_registry() {
+	new_test_ext().execute_with(|| {
+		seed_categories();
+		let key = |k: &[u8]| BoundedVec::truncate_from(k.to_vec());
+		assert_eq!(Categories::<Test>::get(PRIME_MINISTER).map(|c| (c.kind, c.domain)), Some((CategoryKind::Position, Some(POLITICS))));
+		assert_eq!(Categories::<Test>::get(JUSTICE).map(|c| c.kind), Some(CategoryKind::Domain));
+		assert_eq!(Categories::<Test>::iter().count(), DEFAULT_CATEGORIES.len());
+
+		assert_noop!(
+			Ledger::set_category(origin(), 40, CategoryKind::Domain, None, key(b"defense")),
+			DispatchError::BadOrigin
+		);
+		let root = || RuntimeOrigin::root();
+		assert_noop!(Ledger::set_category(root(), 40, CategoryKind::Position, None, key(b"mayor")), Error::<Test>::BadDomain);
+		assert_noop!(
+			Ledger::set_category(root(), 40, CategoryKind::Position, Some(PRIME_MINISTER), key(b"mayor")),
+			Error::<Test>::BadDomain
+		);
+		assert_noop!(Ledger::set_category(root(), 40, CategoryKind::Domain, Some(POLITICS), key(b"mayor")), Error::<Test>::BadDomain);
+		assert_ok!(Ledger::set_category(root(), 40, CategoryKind::Position, Some(POLITICS), key(b"mayor")));
+
+		// A category in use keeps its kind (its counts would be wrong), but can be renamed.
+		let rep = account(&pair("Rep"));
+		trust_via(&attester(), "a", &rep, ECONOMY, TrustAction::Give);
+		assert_noop!(
+			Ledger::set_category(root(), ECONOMY, CategoryKind::Position, Some(POLITICS), key(b"economy")),
+			Error::<Test>::CategoryInUse
+		);
+		assert_ok!(Ledger::set_category(root(), ECONOMY, CategoryKind::Domain, None, key(b"economics")));
+	});
+}
+
+#[test]
+fn migration_counts_existing_trusts_and_keeps_the_registry() {
+	new_test_ext().execute_with(|| {
+		use frame_support::traits::{GetStorageVersion, OnRuntimeUpgrade, StorageVersion};
+		let rep = account(&pair("Rep"));
+		// Trusts recorded before the registry existed (runtime 206): all counted like domains.
+		trust_via(&attester(), "a", &rep, ECONOMY, TrustAction::Give);
+		trust_via(&attester(), "b", &rep, ECONOMY, TrustAction::Give);
+		trust_via(&attester(), "a", &rep, PRIME_MINISTER, TrustAction::Give);
+		for k in TrustReceivedIn::<Test>::iter_keys().collect::<Vec<_>>() {
+			TrustReceivedIn::<Test>::remove(k.0, k.1);
+		}
+		let _ = CategoryUse::<Test>::clear(u32::MAX, None);
+		Categories::<Test>::insert(ECONOMY, CategoryInfo { kind: CategoryKind::Domain, domain: None, key: BoundedVec::truncate_from(b"economics".to_vec()) });
+		StorageVersion::new(1).put::<Ledger>();
+
+		crate::migrations::MigrateV1ToV2::<Test>::on_runtime_upgrade();
+
+		assert_eq!(Ledger::on_chain_storage_version(), 2);
+		assert_eq!(Categories::<Test>::get(ECONOMY).unwrap().key.to_vec(), b"economics".to_vec());
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 2);
+		// One attester: the position trust is that app's.
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &attester(), PRIME_MINISTER)), 1);
+		assert_eq!(CategoryUse::<Test>::get(PRIME_MINISTER), 1);
+		trust_via(&attester(), "a", &rep, PRIME_MINISTER, TrustAction::Revoke);
+		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &attester(), PRIME_MINISTER)), 0);
+		// Run again: nothing changes.
+		crate::migrations::MigrateV1ToV2::<Test>::on_runtime_upgrade();
+		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 2);
 	});
 }

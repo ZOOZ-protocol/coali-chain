@@ -338,13 +338,14 @@ fn plan(session: u32) -> Vec<u64> {
 	ProofOfTrust::new_session(session).unwrap_or_default()
 }
 
-/// Six candidates 20..=25 (person 10 + i runs 20 + i), 20 the most trusted, 25 the least;
-/// two founders leave them 3 seats at a 34% founder share.
+/// Six candidates 20..=25 (person 10 + i runs 20 + i), 20 the most trusted, 25 the least,
+/// each with a recent heartbeat; two founders leave them 3 seats at a 34% founder share.
 fn six_candidates(max_new: u32) {
 	limits(34, max_new);
 	for i in 0..6u64 {
 		enroll(10 + i, 20 + i);
 		verified_trusters(1000 + 100 * i, 6 - i, 10 + i);
+		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(20 + i)));
 	}
 }
 
@@ -422,5 +423,54 @@ fn leaving_by_rotation_is_not_a_strike() {
 		assert_eq!(set.len(), 5);
 		assert_ok!(ProofOfTrust::withdraw(RuntimeOrigin::signed(21)));
 		assert!(!crate::LastServed::<Test>::contains_key(21));
+	});
+}
+
+#[test]
+fn no_rotation_below_the_validator_threshold() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		rotation(1, 1);
+		// Two founders and six candidates: 8 validators, one short of the threshold.
+		RotationMinValidators::set(9);
+		for session in [1, 2, 3] {
+			assert_eq!(plan(session), vec![1, 2, 20, 21, 22]);
+		}
+		RotationMinValidators::set(8);
+		assert_eq!(plan(4), vec![1, 2, 20, 23, 24]);
+	});
+}
+
+#[test]
+fn a_newcomer_takes_a_rotating_seat_only_when_seen_online() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		rotation(1, 1);
+		crate::LastHeartbeat::<Test>::remove(23);
+		assert_eq!(plan(1), vec![1, 2, 20, 21, 22]);
+		// 23 never served but gave no sign of life: its turn goes to the next in line.
+		assert_eq!(plan(2), vec![1, 2, 20, 24, 25]);
+		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(23)));
+		assert_eq!(plan(3), vec![1, 2, 20, 23, 21]);
+		// A heartbeat older than `RecentlySeen` no longer counts.
+		System::set_block_number(1 + RecentlySeen::get() + 1);
+		for v in [1, 2, 20, 23, 21] {
+			ProofOfTrust::note_author(v);
+		}
+		assert!(!ProofOfTrust::recently_seen(&24, System::block_number()));
+		assert!(ProofOfTrust::recently_seen(&23, System::block_number()));
+	});
+}
+
+#[test]
+fn only_validators_send_heartbeats() {
+	new_test_ext().execute_with(|| {
+		assert_noop!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(7)), Error::<Test>::NotCandidate);
+		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(1)));
+		enroll(10, 20);
+		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(20)));
+		assert!(crate::LastHeartbeat::<Test>::contains_key(20));
+		assert_ok!(ProofOfTrust::withdraw(RuntimeOrigin::signed(20)));
+		assert!(!crate::LastHeartbeat::<Test>::contains_key(20));
 	});
 }

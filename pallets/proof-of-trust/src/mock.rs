@@ -77,6 +77,8 @@ parameter_types! {
 	pub const OfflineAfter: u64 = 30;
 	pub const MaxStrikes: u32 = 3;
 	pub const StrikeForgiveness: u64 = 1_000;
+	pub static RotationMinValidators: u32 = 0;
+	pub const RecentlySeen: u64 = 1_000;
 }
 
 impl pallet_proof_of_trust::Config for Test {
@@ -87,10 +89,13 @@ impl pallet_proof_of_trust::Config for Test {
 	type OfflineAfter = OfflineAfter;
 	type MaxStrikes = MaxStrikes;
 	type StrikeForgiveness = StrikeForgiveness;
+	type RotationMinValidators = RotationMinValidators;
+	type RecentlySeen = RecentlySeen;
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {
 	TRUST.with(|t| t.borrow_mut().clear());
+	RotationMinValidators::set(0);
 	let mut storage = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
 	pallet_proof_of_trust::GenesisConfig::<Test> {
 		founders: FOUNDERS.to_vec(),

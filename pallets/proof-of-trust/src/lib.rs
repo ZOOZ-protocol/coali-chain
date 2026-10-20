@@ -19,7 +19,11 @@
 //! - Rotation: the `CoreSeats` most trusted candidates keep their seats; the remaining candidate
 //!   seats rotate every `RotationPeriod` sessions, going first to the eligible candidates that
 //!   served least recently (`LastServed`), so every trusted candidate validates and earns in
-//!   turn. Leaving the set by rotation is not a strike.
+//!   turn. Leaving the set by rotation is not a strike. Rotation only starts once at least
+//!   `RotationMinValidators` validators (live founders and eligible candidates) are available:
+//!   below that every candidate seat is a core seat. A candidate that never served (or not
+//!   lately) takes a rotating seat only if it showed it is online within `RecentlySeen` blocks:
+//!   a block authored, `go_online` or `heartbeat`.
 //! - Liveness: a selected validator (founder or candidate) that authored no block for
 //!   `OfflineAfter` blocks is set aside and gets a strike. It can ask to come back with
 //!   `go_online` after a cooldown that doubles with each strike; a candidate reaching
@@ -98,6 +102,12 @@ pub mod pallet {
 		/// Blocks without a new strike after which strikes are forgiven.
 		#[pallet::constant]
 		type StrikeForgiveness: Get<BlockNumberFor<Self>>;
+		/// Validators (live founders and eligible candidates) needed before seats rotate.
+		#[pallet::constant]
+		type RotationMinValidators: Get<u32>;
+		/// How recently a newcomer must have shown it is online to take a rotating seat.
+		#[pallet::constant]
+		type RecentlySeen: Get<BlockNumberFor<Self>>;
 	}
 
 	#[pallet::type_value]
@@ -201,6 +211,11 @@ pub mod pallet {
 	pub type LastAuthored<T: Config> =
 		StorageMap<_, Blake2_128Concat, T::AccountId, BlockNumberFor<T>, OptionQuery>;
 
+	/// Last `heartbeat` or `go_online` of a validator.
+	#[pallet::storage]
+	pub type LastHeartbeat<T: Config> =
+		StorageMap<_, Blake2_128Concat, T::AccountId, BlockNumberFor<T>, OptionQuery>;
+
 	#[pallet::genesis_config]
 	#[derive(frame_support::DefaultNoBound)]
 	pub struct GenesisConfig<T: Config> {
@@ -241,6 +256,8 @@ pub mod pallet {
 		/// Reported for signing two conflicting votes (equivocation).
 		ValidatorEquivocated { validator: T::AccountId },
 		ValidatorsPlanned { session: SessionIndex, founders: u32, candidates: u32 },
+		/// A validator showed it is online (`heartbeat`).
+		ValidatorSeen { validator: T::AccountId },
 	}
 
 	#[pallet::error]
@@ -375,6 +392,7 @@ pub mod pallet {
 			}
 			Offline::<T>::remove(&validator);
 			OfflineSince::<T>::remove(&validator);
+			LastHeartbeat::<T>::insert(&validator, now);
 			Self::deposit_event(Event::CandidateOnline { validator });
 			Ok(())
 		}
@@ -422,6 +440,18 @@ pub mod pallet {
 			CoreSeats::<T>::put(core_seats);
 			RotationPeriod::<T>::put(period);
 			Self::deposit_event(Event::RotationSet { core_seats, period });
+			Ok(())
+		}
+
+		/// A validator (candidate or founder) shows it is online, which a candidate needs before
+		/// taking a rotating seat (`RecentlySeen`). Sent by the node operator's validator account.
+		#[pallet::call_index(12)]
+		#[pallet::weight(Weight::from_parts(BASE, 2_000).saturating_add(T::DbWeight::get().reads_writes(3, 1)))]
+		pub fn heartbeat(origin: OriginFor<T>) -> DispatchResult {
+			let validator = ensure_signed(origin)?;
+			ensure!(Self::is_validator(&validator), Error::<T>::NotCandidate);
+			LastHeartbeat::<T>::insert(&validator, frame_system::Pallet::<T>::block_number());
+			Self::deposit_event(Event::ValidatorSeen { validator });
 			Ok(())
 		}
 	}
@@ -476,6 +506,7 @@ pub mod pallet {
 			Strikes::<T>::remove(validator);
 			SelectedSince::<T>::remove(validator);
 			LastAuthored::<T>::remove(validator);
+			LastHeartbeat::<T>::remove(validator);
 			LastServed::<T>::remove(validator);
 		}
 
@@ -528,6 +559,13 @@ pub mod pallet {
 			Self::deposit_event(Event::CandidateOffline { validator: validator.clone() });
 		}
 
+		/// Whether a validator authored a block, came back online or sent a heartbeat within
+		/// `RecentlySeen` blocks.
+		pub fn recently_seen(validator: &T::AccountId, now: BlockNumberFor<T>) -> bool {
+			let seen = LastAuthored::<T>::get(validator).max(LastHeartbeat::<T>::get(validator));
+			seen.is_some_and(|at| now.saturating_sub(at) <= T::RecentlySeen::get())
+		}
+
 		/// Liveness check for a validator currently in the set. Returns false (and strikes it)
 		/// when it authored nothing for `OfflineAfter` blocks. Forgives old strikes.
 		fn still_alive(validator: &T::AccountId, now: BlockNumberFor<T>) -> bool {
@@ -562,7 +600,8 @@ pub mod pallet {
 		/// Live founders, then eligible live candidates within the seats left by `FounderShare`
 		/// and `MaxValidators`, with at most `MaxNewPerSession` newcomers: the `CoreSeats` most
 		/// trusted first, then the rotating seats. Rotating seats keep their holders between
-		/// rotations and go to the least recently served candidates at each rotation. Offline
+		/// rotations and go to the least recently served candidates at each rotation, newcomers
+		/// only if `recently_seen`. Below `RotationMinValidators` there is no rotation. Offline
 		/// validators are left out so that they cannot stall GRANDPA finality; if nobody is left,
 		/// all founders are kept.
 		pub fn select(session: SessionIndex) -> Vec<T::AccountId> {
@@ -591,7 +630,8 @@ pub mod pallet {
 			ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
 			let room = Self::candidate_room(founders.len());
-			let core_room = room.min(CoreSeats::<T>::get() as usize);
+			let rotating = founders.len().saturating_add(ranked.len()) >= T::RotationMinValidators::get() as usize;
+			let core_room = if rotating { room.min(CoreSeats::<T>::get() as usize) } else { room };
 			let mut newcomers = MaxNewPerSession::<T>::get();
 			let mut chosen: Vec<T::AccountId> = Vec::new();
 			let mut rest: Vec<(Option<SessionIndex>, u32, T::AccountId, bool)> = Vec::new();
@@ -608,7 +648,7 @@ pub mod pallet {
 			}
 
 			let period = RotationPeriod::<T>::get();
-			if period == 0 || session.is_multiple_of(period) {
+			if rotating && (period == 0 || session.is_multiple_of(period)) {
 				// Never served first, then least recently served, then most trusted.
 				rest.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
 			} else {
@@ -621,7 +661,8 @@ pub mod pallet {
 				});
 			}
 			for (_, _, validator, incumbent) in rest {
-				let fits = chosen.len() < room && (incumbent || newcomers > 0);
+				let fits = chosen.len() < room &&
+					(incumbent || (newcomers > 0 && Self::recently_seen(&validator, now)));
 				if !fits {
 					SelectedSince::<T>::remove(&validator);
 					continue;

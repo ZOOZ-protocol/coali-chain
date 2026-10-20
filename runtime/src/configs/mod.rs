@@ -84,6 +84,7 @@ type SingleBlockMigrations = (
 	pallet_assets::migration::next_asset_id::SetNextAssetId<FirstAssetId, Runtime>,
 	pallet_proof_of_trust::migrations::MigrateV0ToV1<Runtime, LedgerAttesters>,
 	pallet_coali_ledger::migrations::MigrateV0ToV1<Runtime>,
+	pallet_coali_ledger::migrations::MigrateV1ToV2<Runtime>,
 );
 
 /// Identity attesters at the 204 upgrade: the ledger attesters (one key for now; to be moved to
@@ -278,6 +279,10 @@ parameter_types! {
 	pub const PotOfflineAfter: BlockNumber = 120;
 	pub const PotMaxStrikes: u32 = 5;
 	pub const PotStrikeForgiveness: BlockNumber = 7 * DAYS;
+	/// No seat rotation while every validator fits in the set.
+	pub const PotRotationMinValidators: u32 = 32;
+	/// A newcomer takes a rotating seat if it showed it is online within the last day.
+	pub const PotRecentlySeen: BlockNumber = DAYS;
 }
 
 impl pallet_authorship::Config for Runtime {
@@ -308,6 +313,8 @@ impl pallet_proof_of_trust::Config for Runtime {
 	type OfflineAfter = PotOfflineAfter;
 	type MaxStrikes = PotMaxStrikes;
 	type StrikeForgiveness = PotStrikeForgiveness;
+	type RotationMinValidators = PotRotationMinValidators;
+	type RecentlySeen = PotRecentlySeen;
 }
 
 parameter_types! {
