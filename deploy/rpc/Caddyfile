@@ -32,6 +32,10 @@
 	import headers
 	import csp data:
 	import hidden
+	# The former landing page is replaced by the explorer; the validator guide, the chain spec and
+	# the downloads stay here because zooz.network, wallets and nodes link to them.
+	redir / https://explorer.{$DOMAIN}/ 302
+	redir /index.html https://explorer.{$DOMAIN}/ 302
 	handle /coali-testnet-raw.json {
 		root * /srv/spec
 		file_server
