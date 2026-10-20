@@ -474,8 +474,9 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type TrustReceived<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
 
-	/// The category registry (`DEFAULT_CATEGORIES`, then the admin origin). Trust in a category
-	/// that is not registered counts like trust in a domain.
+	/// The category registry (`DEFAULT_CATEGORIES` at genesis or by the v1 -> v2 migration, then
+	/// the admin origin). New trusts must name a registered category (runtime 208); trusts
+	/// recorded before in an unregistered id were counted like domains and can still be revoked.
 	#[pallet::storage]
 	pub type Categories<T: Config> = StorageMap<_, Twox64Concat, u32, CategoryInfo, OptionQuery>;
 
@@ -596,6 +597,11 @@ pub mod pallet {
 			for who in &self.attesters {
 				Attesters::<T>::insert(who, ());
 			}
+			for (id, key, domain) in DEFAULT_CATEGORIES {
+				let kind = if domain.is_some() { CategoryKind::Position } else { CategoryKind::Domain };
+				let key = BoundedVec::truncate_from(key.to_vec());
+				Categories::<T>::insert(id, CategoryInfo { kind, domain: *domain, key });
+			}
 		}
 	}
 
@@ -695,6 +701,8 @@ pub mod pallet {
 		BadDomain,
 		/// A category in use (trusts recorded) cannot change kind.
 		CategoryInUse,
+		/// Trust is given in categories of the registry only.
+		UnknownCategory,
 	}
 
 	#[pallet::call]
@@ -818,6 +826,7 @@ pub mod pallet {
 			let key = (truster.clone(), trusted.clone(), category);
 			match action {
 				TrustAction::Give => {
+					ensure!(Categories::<T>::contains_key(category), Error::<T>::UnknownCategory);
 					ensure!(!TrustEdges::<T>::contains_key(&key), Error::<T>::AlreadyTrusted);
 					TrustEdges::<T>::insert(&key, frame_system::Pallet::<T>::block_number());
 					Self::count_trust(&key, Some(&app));

@@ -79,6 +79,15 @@ parameter_types! {
 	pub const StrikeForgiveness: u64 = 1_000;
 	pub static RotationMinValidators: u32 = 0;
 	pub const RecentlySeen: u64 = 1_000;
+	/// Validator accounts without session keys.
+	pub static WithoutKeys: Vec<u64> = vec![];
+}
+
+pub struct HasSessionKeys;
+impl frame_support::traits::Contains<u64> for HasSessionKeys {
+	fn contains(who: &u64) -> bool {
+		!WithoutKeys::get().contains(who)
+	}
 }
 
 impl pallet_proof_of_trust::Config for Test {
@@ -91,11 +100,13 @@ impl pallet_proof_of_trust::Config for Test {
 	type StrikeForgiveness = StrikeForgiveness;
 	type RotationMinValidators = RotationMinValidators;
 	type RecentlySeen = RecentlySeen;
+	type HasSessionKeys = HasSessionKeys;
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {
 	TRUST.with(|t| t.borrow_mut().clear());
 	RotationMinValidators::set(0);
+	WithoutKeys::set(vec![]);
 	let mut storage = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
 	pallet_proof_of_trust::GenesisConfig::<Test> {
 		founders: FOUNDERS.to_vec(),

@@ -5,6 +5,10 @@ Every runtime deployed on the testnet is built with [srtool](https://github.com/
 published as a GitHub release with its hashes. The file deployed is that release file; the chain's
 `:code` storage must hash to the same value.
 
+Storage migrations so far run in the upgrade block (single-block). That is fine at testnet size;
+before mainnet, any migration that walks a large map (trusts, votes) must be multi-block
+(`pallet-migrations`), so that an upgrade can never exceed a block's weight.
+
 ## 207 — live since 2026-10-20 (block #84687)
 
 | | |

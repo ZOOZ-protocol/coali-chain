@@ -108,6 +108,9 @@ pub mod pallet {
 		/// How recently a newcomer must have shown it is online to take a rotating seat.
 		#[pallet::constant]
 		type RecentlySeen: Get<BlockNumberFor<Self>>;
+		/// Validator accounts with session keys set (`session.set_keys`): only they can send a
+		/// heartbeat, since a validator without keys cannot author.
+		type HasSessionKeys: frame_support::traits::Contains<Self::AccountId>;
 	}
 
 	#[pallet::type_value]
@@ -275,6 +278,8 @@ pub mod pallet {
 		AlreadyIdentityAttester,
 		/// The cooldown after going offline is not over.
 		CooldownNotOver,
+		/// Set session keys (`session.set_keys`) first.
+		NoSessionKeys,
 	}
 
 	const BASE: u64 = 20_000_000;
@@ -444,12 +449,18 @@ pub mod pallet {
 		}
 
 		/// A validator (candidate or founder) shows it is online, which a candidate needs before
-		/// taking a rotating seat (`RecentlySeen`). Sent by the node operator's validator account.
+		/// taking a rotating seat (`RecentlySeen`). Sent by the node operator's validator account,
+		/// which must have its session keys set. It proves the operator holds the account, not
+		/// that the node runs: a node that then authors nothing is set aside after `OfflineAfter`.
 		#[pallet::call_index(12)]
 		#[pallet::weight(Weight::from_parts(BASE, 2_000).saturating_add(T::DbWeight::get().reads_writes(3, 1)))]
 		pub fn heartbeat(origin: OriginFor<T>) -> DispatchResult {
 			let validator = ensure_signed(origin)?;
 			ensure!(Self::is_validator(&validator), Error::<T>::NotCandidate);
+			ensure!(
+				<T::HasSessionKeys as frame_support::traits::Contains<T::AccountId>>::contains(&validator),
+				Error::<T>::NoSessionKeys
+			);
 			LastHeartbeat::<T>::insert(&validator, frame_system::Pallet::<T>::block_number());
 			Self::deposit_event(Event::ValidatorSeen { validator });
 			Ok(())

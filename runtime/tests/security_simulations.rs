@@ -346,9 +346,11 @@ mod blocked {
 			let g = give_key("u1", "u2");
 			let target = trust_address("u2");
 			assert_ok!(ProofOfTrust::attest_identity(as_attester(), acc(&g), true));
-			for cat in 0..200 {
-				assert_ok!(trust(&g, &target, cat));
+			for (cat, _, _) in pallet_coali_ledger::DEFAULT_CATEGORIES {
+				assert_ok!(trust(&g, &target, *cat));
 			}
+			// Made-up categories cannot multiply trust edges (runtime 208).
+			assert_noop!(trust(&g, &target, 200), L::<Runtime>::UnknownCategory);
 			assert_eq!(pallet_coali_ledger::TrustReceived::<Runtime>::get(&target), 1);
 			assert_eq!(ProofOfTrust::score(&target), 1);
 		});

@@ -640,14 +640,15 @@ fn migration_counts_existing_trusts_and_keeps_the_registry() {
 	new_test_ext().execute_with(|| {
 		use frame_support::traits::{GetStorageVersion, OnRuntimeUpgrade, StorageVersion};
 		let rep = account(&pair("Rep"));
-		// Trusts recorded before the registry existed (runtime 206): all counted like domains.
 		trust_via(&attester(), "a", &rep, ECONOMY, TrustAction::Give);
 		trust_via(&attester(), "b", &rep, ECONOMY, TrustAction::Give);
 		trust_via(&attester(), "a", &rep, PRIME_MINISTER, TrustAction::Give);
-		for k in TrustReceivedIn::<Test>::iter_keys().collect::<Vec<_>>() {
-			TrustReceivedIn::<Test>::remove(k.0, k.1);
-		}
+		// Back to the runtime 206 layout: edges only, no registry and no counts.
+		let _ = TrustReceivedIn::<Test>::clear(u32::MAX, None);
+		let _ = TrustReceivedFor::<Test>::clear(u32::MAX, None);
+		let _ = TrustEdgeApp::<Test>::clear(u32::MAX, None);
 		let _ = CategoryUse::<Test>::clear(u32::MAX, None);
+		let _ = Categories::<Test>::clear(u32::MAX, None);
 		Categories::<Test>::insert(ECONOMY, CategoryInfo { kind: CategoryKind::Domain, domain: None, key: BoundedVec::truncate_from(b"economics".to_vec()) });
 		StorageVersion::new(1).put::<Ledger>();
 
@@ -655,6 +656,7 @@ fn migration_counts_existing_trusts_and_keeps_the_registry() {
 
 		assert_eq!(Ledger::on_chain_storage_version(), 2);
 		assert_eq!(Categories::<Test>::get(ECONOMY).unwrap().key.to_vec(), b"economics".to_vec());
+		assert_eq!(Categories::<Test>::iter().count(), DEFAULT_CATEGORIES.len());
 		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 2);
 		// One attester: the position trust is that app's.
 		assert_eq!(TrustReceivedFor::<Test>::get((&rep, &attester(), PRIME_MINISTER)), 1);
@@ -664,5 +666,25 @@ fn migration_counts_existing_trusts_and_keeps_the_registry() {
 		// Run again: nothing changes.
 		crate::migrations::MigrateV1ToV2::<Test>::on_runtime_upgrade();
 		assert_eq!(TrustReceivedIn::<Test>::get(&rep, ECONOMY), 2);
+	});
+}
+
+#[test]
+fn trust_needs_a_registered_category_but_old_ones_can_be_revoked() {
+	new_test_ext().execute_with(|| {
+		let rep = account(&pair("Rep"));
+		let nonce = TrustNonces::<Test>::get(account(&pair("a")));
+		let (who, sig) = signed_trust("a", &rep, 99, TrustAction::Give, nonce);
+		assert_noop!(
+			Ledger::record_trust(origin(), who.clone(), rep.clone(), 99, TrustAction::Give, nonce, sig),
+			Error::<Test>::UnknownCategory
+		);
+		// A trust recorded in id 99 before runtime 208 (counted like a domain) is revoked as usual.
+		TrustEdges::<Test>::insert((who.clone(), rep.clone(), 99u32), 1u64);
+		TrustReceivedIn::<Test>::insert(&rep, 99u32, 1u32);
+		CategoryUse::<Test>::insert(99u32, 1u32);
+		trust_via(&attester(), "a", &rep, 99, TrustAction::Revoke);
+		assert!(!TrustReceivedIn::<Test>::contains_key(&rep, 99u32));
+		assert!(!CategoryUse::<Test>::contains_key(99u32));
 	});
 }

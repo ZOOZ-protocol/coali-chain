@@ -90,7 +90,7 @@ Le set compte au plus 32 validateurs ; les fondateurs gardent au moins `FounderS
 - `MaxNewPerSession` limite toujours le nombre d'entrées par session : la rotation se fait petit à petit ;
 - sortir du set par rotation n'est pas une pénalité ;
 - depuis le runtime 207, la rotation ne démarre qu'à partir de 32 validateurs disponibles (fondateurs en ligne et candidats éligibles, `RotationMinValidators`) : en dessous, toutes les places sont fixes, quel que soit le réglage ;
-- un candidat qui n'a jamais servi (ou pas récemment) ne prend une place tournante que s'il a montré qu'il est en ligne dans les dernières 24 heures (`RecentlySeen`) : un bloc produit, un `goOnline` ou un `proofOfTrust.heartbeat()` envoyé par son compte validateur. Un nœud éteint ne peut donc pas entrer par la rotation et ralentir la finalité.
+- un candidat qui n'a jamais servi (ou pas récemment) ne prend une place tournante que s'il a montré qu'il est en ligne dans les dernières 24 heures (`RecentlySeen`) : un bloc produit, un `goOnline` ou un `proofOfTrust.heartbeat()` envoyé par son compte validateur, qui doit avoir enregistré ses clés de session (runtime 208). Le heartbeat prouve la détention du compte, pas que le nœud tourne : un nœud entré ainsi qui ne produit rien est écarté après 120 blocs, et `MaxNewPerSession` limite les entrées simultanées.
 
 Par défaut, `CoreSeats` couvre toutes les places : pas de rotation. Pour l'activer, par exemple 4 places fixes changées toutes les heures :
 

@@ -25,8 +25,10 @@ Example: 300 people trust Dana in economy and 500 in education, the 300 being am
 `trustReceivedIn(Dana, economy) = 300`, `trustReceivedIn(Dana, education) = 500`,
 `trustReceived(Dana) = 500`.
 
-Trust in an id the registry does not know is counted like a domain. A category with trusts
-recorded cannot change kind. Ids never change and are never reused.
+Since runtime 208 a trust must name a registered category (`UnknownCategory` otherwise), so an
+app sending a wrong id fails loudly. Trusts recorded earlier in an unregistered id were counted
+like domains and can still be revoked. A category with trusts recorded cannot change kind. Ids
+never change and are never reused.
 
 ## The list
 

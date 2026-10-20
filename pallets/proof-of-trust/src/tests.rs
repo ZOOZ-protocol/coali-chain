@@ -466,6 +466,10 @@ fn a_newcomer_takes_a_rotating_seat_only_when_seen_online() {
 fn only_validators_send_heartbeats() {
 	new_test_ext().execute_with(|| {
 		assert_noop!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(7)), Error::<Test>::NotCandidate);
+		// A validator account without session keys cannot claim to be online.
+		WithoutKeys::set(vec![1]);
+		assert_noop!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(1)), Error::<Test>::NoSessionKeys);
+		WithoutKeys::set(vec![]);
 		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(1)));
 		enroll(10, 20);
 		assert_ok!(ProofOfTrust::heartbeat(RuntimeOrigin::signed(20)));

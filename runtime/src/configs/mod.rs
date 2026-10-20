@@ -315,6 +315,15 @@ impl pallet_proof_of_trust::Config for Runtime {
 	type StrikeForgiveness = PotStrikeForgiveness;
 	type RotationMinValidators = PotRotationMinValidators;
 	type RecentlySeen = PotRecentlySeen;
+	type HasSessionKeys = ValidatorsWithKeys;
+}
+
+/// Validator accounts that set their session keys.
+pub struct ValidatorsWithKeys;
+impl frame_support::traits::Contains<AccountId> for ValidatorsWithKeys {
+	fn contains(who: &AccountId) -> bool {
+		pallet_session::NextKeys::<Runtime>::contains_key(who)
+	}
 }
 
 parameter_types! {
