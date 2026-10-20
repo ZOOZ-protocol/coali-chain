@@ -608,7 +608,7 @@ pub mod pallet {
 			}
 
 			let period = RotationPeriod::<T>::get();
-			if period == 0 || session % period == 0 {
+			if period == 0 || session.is_multiple_of(period) {
 				// Never served first, then least recently served, then most trusted.
 				rest.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
 			} else {
