@@ -88,7 +88,9 @@ Le set compte au plus 32 validateurs ; les fondateurs gardent au moins `FounderS
 - les `CoreSeats` candidats les plus trustés gardent leur place ;
 - les autres places tournent toutes les `RotationPeriod` sessions (12 par défaut, environ 1 heure) : elles vont d'abord aux candidats éligibles qui n'ont jamais servi ou qui ont servi il y a le plus longtemps. Chaque candidat trusté produit des blocs et gagne à son tour ;
 - `MaxNewPerSession` limite toujours le nombre d'entrées par session : la rotation se fait petit à petit ;
-- sortir du set par rotation n'est pas une pénalité.
+- sortir du set par rotation n'est pas une pénalité ;
+- depuis le runtime 207, la rotation ne démarre qu'à partir de 32 validateurs disponibles (fondateurs en ligne et candidats éligibles, `RotationMinValidators`) : en dessous, toutes les places sont fixes, quel que soit le réglage ;
+- un candidat qui n'a jamais servi (ou pas récemment) ne prend une place tournante que s'il a montré qu'il est en ligne dans les dernières 24 heures (`RecentlySeen`) : un bloc produit, un `goOnline` ou un `proofOfTrust.heartbeat()` envoyé par son compte validateur. Un nœud éteint ne peut donc pas entrer par la rotation et ralentir la finalité.
 
 Par défaut, `CoreSeats` couvre toutes les places : pas de rotation. Pour l'activer, par exemple 4 places fixes changées toutes les heures :
 
