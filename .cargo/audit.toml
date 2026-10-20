@@ -1,9 +1,16 @@
 # cargo audit exceptions, reviewed 2026-10-18. Everything fixable within the Polkadot SDK release
-# (polkadot-stable2606-3) was updated (wasmtime 36.0.18, rustls 0.23.46, rustls-webpki 0.103.15,
+# (polkadot-stable2606-3) was updated (wasmtime 36.0.19, rustls 0.23.46, rustls-webpki 0.103.15,
 # quinn-proto 0.11.19, h2 0.4.20, crossbeam-epoch 0.9.21, hickory-proto 0.24.4). What remains needs
 # a newer Polkadot SDK release; revisit at each SDK upgrade.
 [advisories]
 ignore = [
+  # wasmtime 36.0.19 (RUSTSEC-2026-0380 and RUSTSEC-2026-0379 fixed 36.0.18 -> 36.0.19): the
+  # remaining advisories are in Cranelift's x86_64 backend, and the node compiles Wasm with the
+  # aarch64 backend only (sc-executor-wasmtime). Revisit when the Polkadot SDK moves wasmtime.
+  "RUSTSEC-2026-0375",
+  "RUSTSEC-2026-0376",
+  "RUSTSEC-2026-0377",
+  "RUSTSEC-2026-0378",
   # tracing-subscriber 0.3.19, pinned (=0.3.19) by the Polkadot SDK: ANSI escapes in node logs.
   # Node operators' terminals only; no effect on consensus or state.
   "RUSTSEC-2025-0055",
