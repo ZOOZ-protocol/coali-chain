@@ -28,7 +28,7 @@ A voter's identity and choice never appear on chain: only a commitment `blake2_2
 
 Protocol details: the pallet sources and their tests.
 
-Runtime in production: **205**, a reproducible srtool build (blake2-256 `0x9b045e52…8842035f`).
+Runtime in production: **206**, a reproducible srtool build (blake2-256 `0xdc094271…c9401b1b`).
 Hashes and the command to rebuild it: [`docs/RUNTIME-RELEASES.md`](docs/RUNTIME-RELEASES.md).
 Security: [`SECURITY.md`](SECURITY.md), [`security/THREAT-MODEL.md`](security/THREAT-MODEL.md).
 

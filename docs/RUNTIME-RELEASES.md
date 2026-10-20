@@ -5,6 +5,20 @@ Every runtime deployed on the testnet is built with [srtool](https://github.com/
 published as a GitHub release with its hashes. The file deployed is that release file; the chain's
 `:code` storage must hash to the same value.
 
+## 206 — live since 2026-10-20 (block #78949)
+
+| | |
+|---|---|
+| Release | [`runtime-206-rc2`](https://github.com/ZOOZ-protocol/coali-chain/releases/tag/runtime-206-rc2) (commit `35e09a5`) |
+| File | `coali_runtime.compact.compressed.wasm`, 729 627 bytes |
+| blake2-256 | `0xdc09427118f189fa1239b6f45291f997ebe0022073b21ecce0dcc804c9401b1b` |
+| Proposal hash (`system.setCode`) | `0xaa0ddb287b649c2ab83f8c85581282f6784585f4fc9b55d0e762b3712a00b5a8` |
+| Build | srtool (CI job "Reproducible runtime (srtool)"), package `coali-runtime`, runtime dir `runtime` |
+| spec / transaction version | 206 / 2 |
+| Changes | Block reward pegged to the dollar: each active validator earns `validatorRewardMicroUsd` ($6) a month at the oracle price, capped by the halved `blockReward`. Optional seat rotation in proof of trust (`setRotation`), off by default. |
+
+Rehearsed on a local 205 chain with `scripts/e2e/rehearse-206.mjs`; on the testnet, the Fuel pays 225 012 planck per block with 4 validators.
+
 ## 205 — live since 2026-10-19 (block #62596)
 
 | | |
@@ -45,7 +59,7 @@ ApiPromise.create({ provider: new WsProvider("wss://rpc.testnet.zooz.network") }
 });'
 ```
 
-Prints the blake2-256 of the runtime in use; for 205 it is the hash above.
+Prints the blake2-256 of the runtime in use; for 206 it is the hash above.
 
 ## Earlier runtimes
 
