@@ -5,6 +5,20 @@ Every runtime deployed on the testnet is built with [srtool](https://github.com/
 published as a GitHub release with its hashes. The file deployed is that release file; the chain's
 `:code` storage must hash to the same value.
 
+## 207 — live since 2026-10-20 (block #84687)
+
+| | |
+|---|---|
+| Release | [`runtime-207-rc1`](https://github.com/ZOOZ-protocol/coali-chain/releases/tag/runtime-207-rc1) (commit `a2204e2`) |
+| File | `coali_runtime.compact.compressed.wasm`, 730 990 bytes |
+| blake2-256 | `0x2c7c12e8893ec48d3d834dd5bc50d55cd938c4040f5ee429d9274e1abae09439` |
+| Proposal hash (`system.setCode`) | `0xa01233f30819fb297d885d3d34f7bb3017db6155dcc0f1e4c68a4ab0f4cd2b0e` |
+| Build | srtool (CI job "Reproducible runtime (srtool)"), package `coali-runtime`, runtime dir `runtime` |
+| spec / transaction version | 207 / 2 |
+| Changes | Category registry (`coaliLedger.categories`, `setCategory`; `docs/CATEGORIES.md`): domains counted across apps (`trustReceivedIn`), positions per app (`trustReceivedFor`); ledger storage v2 migration counts the existing trusts. Seat rotation only from 32 available validators (`RotationMinValidators`); a newcomer takes a rotating seat only if it authored a block, came back online or sent `proofOfTrust.heartbeat` within a day (`RecentlySeen`). |
+
+Rehearsed on a local 206 chain with `scripts/e2e/rehearse-207.mjs` (CI wasm). On the testnet after the upgrade: `:code` hashes to the value above, 36 categories (12 positions), the 8 trusts counted in their domains, `relayer/reconcile.mjs` reports everything matches, per category included.
+
 ## 206 — live since 2026-10-20 (block #78949)
 
 | | |
