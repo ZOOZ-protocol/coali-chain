@@ -9,6 +9,19 @@ Storage migrations so far run in the upgrade block (single-block). That is fine 
 before mainnet, any migration that walks a large map (trusts, votes) must be multi-block
 (`pallet-migrations`), so that an upgrade can never exceed a block's weight.
 
+## 208 — live since 2026-10-20 (block #87180)
+
+| | |
+|---|---|
+| Release | [`runtime-208-rc3`](https://github.com/ZOOZ-protocol/coali-chain/releases/tag/runtime-208-rc3) (commit `fd1b305`) |
+| File | `coali_runtime.compact.compressed.wasm`, 730 766 bytes |
+| blake2-256 | `0x28213dd77faebefc7da27ef42b61763fd0e78014929c1e128072b2c701f7b919` |
+| Build | srtool (CI job "Reproducible runtime (srtool)"), package `coali-runtime`, runtime dir `runtime` |
+| spec / transaction version | 208 / 2 |
+| Changes | `recordTrust` refuses a category that is not in the registry (`UnknownCategory`); edges recorded before 208 can still be revoked. `proofOfTrust.heartbeat` is accepted only from a validator or candidate that has registered session keys (`NoSessionKeys`). The category registry is seeded at genesis. |
+
+Rehearsed on a local 207 chain with `scripts/e2e/rehearse-208.mjs` (CI wasm). On the testnet after the upgrade: `:code` hashes to the value above, 36 categories, the 8 trusts still counted in their domains (1, 2, 9, 16, 19), 4 validators, `relayer/reconcile.mjs` reports everything matches.
+
 ## 207 — live since 2026-10-20 (block #84687)
 
 | | |
