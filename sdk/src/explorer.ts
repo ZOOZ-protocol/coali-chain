@@ -25,7 +25,12 @@ export interface Stats {
     priceUpdated: number | null;
     targetFeeUsd: number;
     split: { author: number; foundation: number; app: number };
+    /** Reward of the next block, in planck: the dollar-pegged validator reward, capped. */
     blockReward: string;
+    /** Highest reward per block after halvings, in planck. */
+    blockRewardCap: string;
+    /** What each active validator earns per month from block rewards; null before runtime 206. */
+    validatorRewardUsd: number | null;
     halvingInterval: number;
     fuel: string;
   };

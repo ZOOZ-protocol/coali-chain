@@ -59,10 +59,22 @@ pub const ORACLE: u64 = 5;
 
 thread_local! {
 	static BLOCK_AUTHOR: RefCell<Option<u64>> = const { RefCell::new(Some(AUTHOR)) };
+	static VALIDATORS: RefCell<u32> = const { RefCell::new(1) };
 }
 
 pub fn set_author(a: Option<u64>) {
 	BLOCK_AUTHOR.with(|x| *x.borrow_mut() = a);
+}
+
+pub fn set_validators(n: u32) {
+	VALIDATORS.with(|x| *x.borrow_mut() = n);
+}
+
+pub struct ValidatorCount;
+impl frame_support::traits::Get<u32> for ValidatorCount {
+	fn get() -> u32 {
+		VALIDATORS.with(|x| *x.borrow())
+	}
 }
 
 pub struct Author;
@@ -82,6 +94,7 @@ impl Contains<u64> for IsApp {
 parameter_types! {
 	pub const Unit: u128 = UNIT;
 	pub const ReferenceWeight: u64 = 500_000_000;
+	pub const BlocksPerMonth: u32 = 100;
 }
 
 impl pallet_zooz_economy::Config for Test {
@@ -91,10 +104,13 @@ impl pallet_zooz_economy::Config for Test {
 	type IsApp = IsApp;
 	type Unit = Unit;
 	type ReferenceWeight = ReferenceWeight;
+	type ValidatorCount = ValidatorCount;
+	type BlocksPerMonth = BlocksPerMonth;
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {
 	set_author(Some(AUTHOR));
+	set_validators(1);
 	let mut storage = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
 	pallet_balances::GenesisConfig::<Test> {
 		balances: vec![(USER, 100 * UNIT), (APP, 100 * UNIT), (FOUNDATION, 100 * UNIT)],
@@ -109,6 +125,8 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 		foundation_percent: 20,
 		block_reward: 2 * UNIT,
 		halving_interval: 10,
+		// $6 a month over 100 blocks at $0.25: 0.24 ZOOZ per block and per validator.
+		validator_reward_micro_usd: 6_000_000,
 		foundation: Some(FOUNDATION),
 		oracle: Some(ORACLE),
 		fuel: 1_000 * UNIT,

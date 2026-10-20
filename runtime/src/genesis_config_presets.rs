@@ -48,6 +48,9 @@ fn testnet_genesis(
 			target_fee_micro_usd: 50_000,
 			author_percent: 60,
 			foundation_percent: 20,
+			// Each active validator earns $6 a month from block rewards (a server's cost);
+			// block_reward is only the cap.
+			validator_reward_micro_usd: 6_000_000,
 			block_reward: 5 * UNIT / 2,
 			halving_interval: 21_000_000,
 			foundation: Some(root.clone()),

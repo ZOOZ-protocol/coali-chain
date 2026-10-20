@@ -372,7 +372,7 @@ async function home() {
       </div>
       <div>
         <div class="stat"><div class="i">🛡️</div><div><div class="k">${t("Validators", "Validateurs")}</div><div class="v"><a href="/validators">${s.validators.length}</a></div><div class="s">Proof of Trust · ${t("no staking", "sans staking")}</div></div></div>
-        <div class="stat"><div class="i">⛽</div><div><div class="k">${t("Block reward · fee split", "Récompense · partage des frais")}</div><div class="v">${amount(e.blockReward, 2)}</div><div class="s">${t("fees", "frais")} ${e.split.author}% ${t("validator", "validateur")} · ${e.split.foundation}% ${t("foundation", "fondation")} · ${e.split.app}% app</div></div></div>
+        <div class="stat"><div class="i">⛽</div><div><div class="k">${t("Block reward · fee split", "Récompense · partage des frais")}</div><div class="v">${amount(e.blockReward, 6)}</div><div class="s">${e.validatorRewardUsd != null ? `${usd(e.validatorRewardUsd)} ${t("/ validator / month", "/ validateur / mois")} · ` : ""}${t("fees", "frais")} ${e.split.author}% ${t("validator", "validateur")} · ${e.split.foundation}% ${t("foundation", "fondation")} · ${e.split.app}% app</div></div></div>
       </div>
     </div></div>
     <div class="cols">

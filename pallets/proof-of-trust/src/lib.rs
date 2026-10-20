@@ -16,6 +16,10 @@
 //!   distinct **verified** addresses (public trusts recorded by `pallet-coali-ledger`).
 //!   Trust from addresses nobody vouched for does not count.
 //! - At most `MaxNewPerSession` candidates enter the set per session; the most trusted first.
+//! - Rotation: the `CoreSeats` most trusted candidates keep their seats; the remaining candidate
+//!   seats rotate every `RotationPeriod` sessions, going first to the eligible candidates that
+//!   served least recently (`LastServed`), so every trusted candidate validates and earns in
+//!   turn. Leaving the set by rotation is not a strike.
 //! - Liveness: a selected validator (founder or candidate) that authored no block for
 //!   `OfflineAfter` blocks is set aside and gets a strike. It can ask to come back with
 //!   `go_online` after a cooldown that doubles with each strike; a candidate reaching
@@ -118,6 +122,29 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type MaxNewPerSession<T: Config> = StorageValue<_, u32, ValueQuery, DefaultMaxNewPerSession>;
 
+	#[pallet::type_value]
+	pub fn DefaultCoreSeats() -> u32 {
+		u32::MAX
+	}
+
+	#[pallet::type_value]
+	pub fn DefaultRotationPeriod() -> u32 {
+		12
+	}
+
+	/// Candidate seats kept by the most trusted candidates; the other candidate seats rotate.
+	/// Every seat by default (no rotation).
+	#[pallet::storage]
+	pub type CoreSeats<T: Config> = StorageValue<_, u32, ValueQuery, DefaultCoreSeats>;
+
+	/// Sessions between two rotations of the rotating seats (0 = every session).
+	#[pallet::storage]
+	pub type RotationPeriod<T: Config> = StorageValue<_, u32, ValueQuery, DefaultRotationPeriod>;
+
+	/// Last session a candidate was planned in the set.
+	#[pallet::storage]
+	pub type LastServed<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, SessionIndex, OptionQuery>;
+
 	#[pallet::storage]
 	pub type Founders<T: Config> =
 		StorageValue<_, BoundedVec<T::AccountId, T::MaxValidators>, ValueQuery>;
@@ -200,6 +227,7 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		MinTrustSet { min_trust: u32 },
 		SelectionLimitsSet { founder_share: Percent, max_new_per_session: u32 },
+		RotationSet { core_seats: u32, period: u32 },
 		FounderAdded { who: T::AccountId },
 		FounderRemoved { who: T::AccountId },
 		IdentityAttesterAdded { who: T::AccountId },
@@ -384,6 +412,18 @@ pub mod pallet {
 			Self::deposit_event(Event::SelectionLimitsSet { founder_share, max_new_per_session });
 			Ok(())
 		}
+
+		/// Keep `core_seats` candidate seats for the most trusted and rotate the others every
+		/// `period` sessions (`u32::MAX` core seats = no rotation).
+		#[pallet::call_index(11)]
+		#[pallet::weight(Weight::from_parts(BASE, 1_000).saturating_add(T::DbWeight::get().writes(2)))]
+		pub fn set_rotation(origin: OriginFor<T>, core_seats: u32, period: u32) -> DispatchResult {
+			T::AdminOrigin::ensure_origin(origin)?;
+			CoreSeats::<T>::put(core_seats);
+			RotationPeriod::<T>::put(period);
+			Self::deposit_event(Event::RotationSet { core_seats, period });
+			Ok(())
+		}
 	}
 
 	impl<T: Config> Pallet<T> {
@@ -436,6 +476,7 @@ pub mod pallet {
 			Strikes::<T>::remove(validator);
 			SelectedSince::<T>::remove(validator);
 			LastAuthored::<T>::remove(validator);
+			LastServed::<T>::remove(validator);
 		}
 
 		fn drop_candidate(validator: &T::AccountId) {
@@ -518,10 +559,12 @@ pub mod pallet {
 			room.min(founders.saturating_mul(100usize.saturating_sub(share)) / share)
 		}
 
-		/// Live founders, then eligible live candidates by decreasing verified trust, within the
-		/// seats left by `FounderShare` and `MaxValidators`, with at most `MaxNewPerSession`
-		/// newcomers. Offline validators are left out so that they cannot stall GRANDPA finality;
-		/// if nobody is left, all founders are kept.
+		/// Live founders, then eligible live candidates within the seats left by `FounderShare`
+		/// and `MaxValidators`, with at most `MaxNewPerSession` newcomers: the `CoreSeats` most
+		/// trusted first, then the rotating seats. Rotating seats keep their holders between
+		/// rotations and go to the least recently served candidates at each rotation. Offline
+		/// validators are left out so that they cannot stall GRANDPA finality; if nobody is left,
+		/// all founders are kept.
 		pub fn select(session: SessionIndex) -> Vec<T::AccountId> {
 			let now = frame_system::Pallet::<T>::block_number();
 			let all_founders = Founders::<T>::get().into_inner();
@@ -548,9 +591,36 @@ pub mod pallet {
 			ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
 			let room = Self::candidate_room(founders.len());
+			let core_room = room.min(CoreSeats::<T>::get() as usize);
 			let mut newcomers = MaxNewPerSession::<T>::get();
 			let mut chosen: Vec<T::AccountId> = Vec::new();
-			for (_, validator, incumbent) in ranked {
+			let mut rest: Vec<(Option<SessionIndex>, u32, T::AccountId, bool)> = Vec::new();
+			for (score, validator, incumbent) in ranked {
+				if chosen.len() < core_room && (incumbent || newcomers > 0) {
+					if !incumbent {
+						newcomers -= 1;
+						SelectedSince::<T>::insert(&validator, now);
+					}
+					chosen.push(validator);
+				} else {
+					rest.push((LastServed::<T>::get(&validator), score, validator, incumbent));
+				}
+			}
+
+			let period = RotationPeriod::<T>::get();
+			if period == 0 || session % period == 0 {
+				// Never served first, then least recently served, then most trusted.
+				rest.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
+			} else {
+				// Between rotations, holders keep their seats; empty seats go to the next in line.
+				rest.sort_by(|a, b| {
+					b.3.cmp(&a.3)
+						.then_with(|| a.0.cmp(&b.0))
+						.then_with(|| b.1.cmp(&a.1))
+						.then_with(|| a.2.cmp(&b.2))
+				});
+			}
+			for (_, _, validator, incumbent) in rest {
 				let fits = chosen.len() < room && (incumbent || newcomers > 0);
 				if !fits {
 					SelectedSince::<T>::remove(&validator);
@@ -561,6 +631,9 @@ pub mod pallet {
 					SelectedSince::<T>::insert(&validator, now);
 				}
 				chosen.push(validator);
+			}
+			for validator in &chosen {
+				LastServed::<T>::insert(validator, session);
 			}
 
 			if founders.is_empty() && chosen.is_empty() {

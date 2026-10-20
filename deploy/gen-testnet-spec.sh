@@ -50,6 +50,7 @@ patch["balances"] = {"balances": [[a, b] for a, b in funded.items()]}
 patch["zoozEconomy"] = {
     "priceMicroUsd": 246_900, "targetFeeMicroUsd": 50_000,
     "authorPercent": 60, "foundationPercent": 20,
+    "validatorRewardMicroUsd": 6_000_000,
     "blockReward": 5 * UNIT // 2, "halvingInterval": 21_000_000,
     "foundation": auth["sudo"], "oracle": None,
     "fuel": TOTAL * 65 // 100,

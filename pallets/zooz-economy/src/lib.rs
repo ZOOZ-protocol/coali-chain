@@ -7,8 +7,11 @@
 //!   a manipulated market cannot make fees free or unpayable; fees never fall below `MinFee`.
 //! - **Fee split.** Each fee goes to the block author, the foundation and the app that generated
 //!   the transaction (`FeeSplit`, default 60/20/20). Without a known app, that share refills Fuel.
-//! - **Block rewards.** The block author also receives `BlockReward` from the Fuel reservoir,
-//!   halved every `HalvingInterval` blocks. No token is ever minted after genesis.
+//! - **Block rewards.** The block author also receives a reward from the Fuel reservoir, sized
+//!   to pay each active validator `ValidatorRewardMicroUsd` per month (a server's cost) at the
+//!   oracle price, whatever the number of votes. `BlockReward`, halved every `HalvingInterval`
+//!   blocks, caps it so a manipulated price cannot drain Fuel. No token is ever minted after
+//!   genesis.
 //! - **Buckets.** The genesis supply sits in keyless accounts (Fuel, Development, Investors, Team,
 //!   Charity) that only the admin origin can spend from, publicly.
 
@@ -115,6 +118,11 @@ pub mod pallet {
 		/// the target fee.
 		#[pallet::constant]
 		type ReferenceWeight: Get<u64>;
+		/// Validators in the current session; the block reward grows with it.
+		type ValidatorCount: Get<u32>;
+		/// Blocks in 30 days, to turn the monthly validator reward into a reward per block.
+		#[pallet::constant]
+		type BlocksPerMonth: Get<u32>;
 	}
 
 	/// Price of 1 ZOOZ in millionths of a dollar.
@@ -129,9 +137,19 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type FeeSplit<T> = StorageValue<_, (Percent, Percent), ValueQuery>;
 
-	/// Reward per block before any halving, in base units, paid from Fuel.
+	/// Highest reward per block before any halving, in base units, paid from Fuel.
 	#[pallet::storage]
 	pub type BlockReward<T> = StorageValue<_, u128, ValueQuery>;
+
+	#[pallet::type_value]
+	pub fn DefaultValidatorReward() -> u64 {
+		6_000_000
+	}
+
+	/// What each active validator earns per month from block rewards, in millionths of a dollar
+	/// (0 = no block reward, validators live on fees only).
+	#[pallet::storage]
+	pub type ValidatorRewardMicroUsd<T> = StorageValue<_, u64, ValueQuery, DefaultValidatorReward>;
 
 	/// Blocks between two halvings of the block reward (0 = never).
 	#[pallet::storage]
@@ -189,6 +207,7 @@ pub mod pallet {
 		pub foundation_percent: u8,
 		pub block_reward: u128,
 		pub halving_interval: BlockNumberFor<T>,
+		pub validator_reward_micro_usd: u64,
 		pub foundation: Option<T::AccountId>,
 		pub oracle: Option<T::AccountId>,
 		/// Genesis supply of each bucket, in base units.
@@ -211,6 +230,7 @@ pub mod pallet {
 			));
 			BlockReward::<T>::put(self.block_reward);
 			HalvingInterval::<T>::put(self.halving_interval);
+			ValidatorRewardMicroUsd::<T>::put(self.validator_reward_micro_usd);
 			if let Some(f) = &self.foundation {
 				Foundation::<T>::put(f);
 			}
@@ -239,6 +259,7 @@ pub mod pallet {
 		TargetFeeSet { micro_usd: u64 },
 		FeeSplitSet { author: Percent, foundation: Percent },
 		BlockRewardSet { reward: u128, halving_interval: BlockNumberFor<T> },
+		ValidatorRewardSet { micro_usd: u64 },
 		FoundationSet { who: T::AccountId },
 		OracleSet { who: Option<T::AccountId> },
 		Spent { bucket: Bucket, to: T::AccountId, amount: u128 },
@@ -265,7 +286,7 @@ pub mod pallet {
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn on_initialize(n: BlockNumberFor<T>) -> Weight {
 			Self::reward_author(n);
-			T::DbWeight::get().reads_writes(5, 2)
+			T::DbWeight::get().reads_writes(8, 2)
 		}
 	}
 
@@ -326,6 +347,7 @@ pub mod pallet {
 			Ok(())
 		}
 
+		/// Cap on the reward per block (before halvings) and the halving interval.
 		#[pallet::call_index(3)]
 		#[pallet::weight(T::DbWeight::get().writes(2))]
 		pub fn set_block_reward(
@@ -390,6 +412,16 @@ pub mod pallet {
 			Ok(())
 		}
 
+		/// Monthly block reward of each active validator, in millionths of a dollar.
+		#[pallet::call_index(10)]
+		#[pallet::weight(T::DbWeight::get().writes(1))]
+		pub fn set_validator_reward(origin: OriginFor<T>, micro_usd: u64) -> DispatchResult {
+			T::AdminOrigin::ensure_origin(origin)?;
+			ValidatorRewardMicroUsd::<T>::put(micro_usd);
+			Self::deposit_event(Event::ValidatorRewardSet { micro_usd });
+			Ok(())
+		}
+
 		/// Choose the app that receives the app share of your fees (`None` to clear).
 		#[pallet::call_index(7)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(1, 1))]
@@ -427,8 +459,8 @@ pub mod pallet {
 			Self::target_fee().saturating_mul(len as u128) / 2_000
 		}
 
-		/// Block reward at block `n`, after halvings.
-		pub fn reward_at(n: BlockNumberFor<T>) -> u128 {
+		/// Highest block reward at block `n`, after halvings.
+		pub fn reward_cap_at(n: BlockNumberFor<T>) -> u128 {
 			let interval = HalvingInterval::<T>::get();
 			let halvings: u32 = if interval.is_zero() {
 				0
@@ -440,6 +472,25 @@ pub mod pallet {
 			} else {
 				BlockReward::<T>::get() >> halvings
 			}
+		}
+
+		/// Reward per block that pays every active validator `ValidatorRewardMicroUsd` a month at
+		/// the current price, in base units. Computed in base units so that a fraction of a
+		/// micro-dollar per block is not rounded away.
+		pub fn usd_reward() -> u128 {
+			let monthly = ValidatorRewardMicroUsd::<T>::get() as u128;
+			let validators = T::ValidatorCount::get() as u128;
+			let price = PriceMicroUsd::<T>::get().max(1) as u128;
+			let blocks = (T::BlocksPerMonth::get() as u128).max(1);
+			monthly
+				.saturating_mul(validators)
+				.saturating_mul(T::Unit::get())
+				/ blocks.saturating_mul(price)
+		}
+
+		/// Block reward at block `n`: the dollar-pegged reward, never above the halved cap.
+		pub fn reward_at(n: BlockNumberFor<T>) -> u128 {
+			Self::usd_reward().min(Self::reward_cap_at(n))
 		}
 
 		fn reward_author(n: BlockNumberFor<T>) {

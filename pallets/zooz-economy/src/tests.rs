@@ -85,12 +85,13 @@ fn admin_sets_price_limits() {
 }
 
 #[test]
-fn block_reward_halves() {
+fn block_reward_cap_halves() {
 	new_test_ext().execute_with(|| {
-		assert_eq!(Economy::reward_at(0), 2 * UNIT);
-		assert_eq!(Economy::reward_at(9), 2 * UNIT);
-		assert_eq!(Economy::reward_at(10), UNIT);
-		assert_eq!(Economy::reward_at(25), UNIT / 2);
+		assert_eq!(Economy::reward_cap_at(0), 2 * UNIT);
+		assert_eq!(Economy::reward_cap_at(9), 2 * UNIT);
+		assert_eq!(Economy::reward_cap_at(10), UNIT);
+		assert_eq!(Economy::reward_cap_at(25), UNIT / 2);
+		assert_eq!(Economy::reward_cap_at(10 * 200), 0);
 		assert_eq!(Economy::reward_at(10 * 200), 0);
 	});
 }
@@ -100,12 +101,58 @@ fn author_is_paid_from_fuel() {
 	new_test_ext().execute_with(|| {
 		let before = free(fuel());
 		Economy::on_initialize(1);
-		assert_eq!(free(AUTHOR), 2 * UNIT);
-		assert_eq!(free(fuel()), before - 2 * UNIT);
+		assert_eq!(free(AUTHOR), 6 * UNIT / 25);
+		assert_eq!(free(fuel()), before - 6 * UNIT / 25);
 		// No author, no reward.
 		set_author(None);
 		Economy::on_initialize(2);
-		assert_eq!(free(fuel()), before - 2 * UNIT);
+		assert_eq!(free(fuel()), before - 6 * UNIT / 25);
+	});
+}
+
+#[test]
+fn reward_grows_with_the_validator_set() {
+	new_test_ext().execute_with(|| {
+		assert_eq!(Economy::reward_at(1), 6 * UNIT / 25);
+		// Five validators share the blocks, so each block pays five times more:
+		// every validator still earns $6 a month.
+		set_validators(5);
+		assert_eq!(Economy::reward_at(1), 6 * UNIT / 5);
+	});
+}
+
+#[test]
+fn reward_follows_the_dollar() {
+	new_test_ext().execute_with(|| {
+		// ZOOZ worth 10x more: the reward in ZOOZ is 10x lower.
+		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::root(), 2_500_000));
+		assert_eq!(Economy::reward_at(1), 6 * UNIT / 250);
+	});
+}
+
+#[test]
+fn reward_never_exceeds_the_cap() {
+	new_test_ext().execute_with(|| {
+		// 100 validators would need 24 ZOOZ per block; the cap holds at 2, then halves.
+		set_validators(100);
+		assert_eq!(Economy::reward_at(1), 2 * UNIT);
+		assert_eq!(Economy::reward_at(10), UNIT);
+		// A crashed price cannot drain Fuel either.
+		assert_ok!(ZoozEconomy::set_price(RuntimeOrigin::root(), 1_000));
+		set_validators(1);
+		assert_eq!(Economy::reward_at(1), 2 * UNIT);
+	});
+}
+
+#[test]
+fn no_validator_reward_means_fees_only() {
+	new_test_ext().execute_with(|| {
+		assert_noop!(ZoozEconomy::set_validator_reward(RuntimeOrigin::signed(USER), 0), DispatchError::BadOrigin);
+		assert_ok!(ZoozEconomy::set_validator_reward(RuntimeOrigin::root(), 0));
+		let before = free(fuel());
+		Economy::on_initialize(1);
+		assert_eq!(free(AUTHOR), 0);
+		assert_eq!(free(fuel()), before);
 	});
 }
 

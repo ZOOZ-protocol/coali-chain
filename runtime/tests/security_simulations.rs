@@ -88,6 +88,7 @@ fn ext() -> sp_io::TestExternalities {
 	z.target_fee_micro_usd = 50_000;
 	z.author_percent = 60;
 	z.foundation_percent = 20;
+	z.validator_reward_micro_usd = 6_000_000;
 	z.block_reward = 5 * UNIT / 2;
 	z.halving_interval = 21_000_000;
 	z.foundation = Some(sudo_key());

@@ -27,3 +27,25 @@ fn a_vote_costs_the_target_fee() {
 		assert!((fee as f64 / target as f64 - 1.0).abs() < 0.05, "vote fee {fee} vs target {target}");
 	});
 }
+
+#[test]
+fn each_active_validator_earns_its_monthly_reward_in_dollars() {
+	let mut g = RuntimeGenesisConfig::default();
+	g.zooz_economy.price_micro_usd = 246_900;
+	g.zooz_economy.validator_reward_micro_usd = 6_000_000;
+	g.zooz_economy.block_reward = 5 * UNIT / 2;
+	let mut ext: sp_io::TestExternalities = g.build_storage().unwrap().into();
+	ext.execute_with(|| {
+		let economy = pallet_zooz_economy::Pallet::<Runtime>::reward_at;
+		for validators in [1u8, 5, 32] {
+			pallet_session::Validators::<Runtime>::put((0..validators).map(|i| AccountId::from([i; 32])).collect::<Vec<_>>());
+			let per_block = economy(1);
+			// Each validator authors 1/n of the blocks of a 30-day month.
+			let per_validator_usd = per_block as f64 / UNIT as f64 * 0.2469 * (30.0 * 14_400.0) / validators as f64;
+			assert!((per_validator_usd - 6.0).abs() < 0.01, "{validators} validators: ${per_validator_usd:.4} a month each");
+		}
+		// About 0.00028 ZOOZ per block with 5 validators: far below the 2.5 ZOOZ cap.
+		pallet_session::Validators::<Runtime>::put((0..5u8).map(|i| AccountId::from([i; 32])).collect::<Vec<_>>());
+		assert_eq!(economy(1), 281_265);
+	});
+}

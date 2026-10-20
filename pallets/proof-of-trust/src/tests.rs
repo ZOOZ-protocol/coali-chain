@@ -333,3 +333,94 @@ fn migration_to_v1_drops_unattributed_verifications() {
 		assert_eq!(StorageVersion::get::<ProofOfTrust>(), 1);
 	});
 }
+
+fn plan(session: u32) -> Vec<u64> {
+	ProofOfTrust::new_session(session).unwrap_or_default()
+}
+
+/// Six candidates 20..=25 (person 10 + i runs 20 + i), 20 the most trusted, 25 the least;
+/// two founders leave them 3 seats at a 34% founder share.
+fn six_candidates(max_new: u32) {
+	limits(34, max_new);
+	for i in 0..6u64 {
+		enroll(10 + i, 20 + i);
+		verified_trusters(1000 + 100 * i, 6 - i, 10 + i);
+	}
+}
+
+fn rotation(core_seats: u32, period: u32) {
+	assert_ok!(ProofOfTrust::set_rotation(RuntimeOrigin::root(), core_seats, period));
+}
+
+#[test]
+fn without_rotation_the_most_trusted_keep_their_seats() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		assert_noop!(ProofOfTrust::set_rotation(attester(), 1, 1), DispatchError::BadOrigin);
+		for session in [1, 12, 24] {
+			assert_eq!(plan(session), vec![1, 2, 20, 21, 22]);
+		}
+	});
+}
+
+#[test]
+fn rotating_seats_give_every_trusted_candidate_a_turn() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		rotation(1, 1);
+		// 20 holds the core seat; the two others go to whoever served least recently.
+		assert_eq!(plan(1), vec![1, 2, 20, 21, 22]);
+		assert_eq!(plan(2), vec![1, 2, 20, 23, 24]);
+		assert_eq!(plan(3), vec![1, 2, 20, 25, 21]);
+		assert_eq!(plan(4), vec![1, 2, 20, 22, 23]);
+	});
+}
+
+#[test]
+fn rotating_seats_change_only_at_each_rotation() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		rotation(1, 3);
+		assert_eq!(plan(1), vec![1, 2, 20, 21, 22]);
+		assert_eq!(plan(2), vec![1, 2, 20, 21, 22]);
+		assert_eq!(plan(3), vec![1, 2, 20, 23, 24]);
+		assert_eq!(plan(4), vec![1, 2, 20, 23, 24]);
+	});
+}
+
+#[test]
+fn rotation_respects_the_newcomer_limit_and_the_founder_share() {
+	new_test_ext().execute_with(|| {
+		six_candidates(1);
+		rotation(1, 1);
+		// One newcomer per session: seats fill, then turn over one at a time.
+		assert_eq!(plan(1), vec![1, 2, 20]);
+		assert_eq!(plan(2), vec![1, 2, 20, 21]);
+		assert_eq!(plan(3), vec![1, 2, 20, 22, 21]);
+		assert_eq!(plan(4), vec![1, 2, 20, 23, 21]);
+		// Founders back to two thirds: no candidate seat to rotate.
+		limits(67, 1);
+		assert_eq!(plan(5), vec![1, 2]);
+	});
+}
+
+#[test]
+fn leaving_by_rotation_is_not_a_strike() {
+	new_test_ext().execute_with(|| {
+		six_candidates(10);
+		rotation(1, 1);
+		let mut set = plan(1);
+		for (session, block) in [(2u32, 20u64), (3, 60), (4, 100), (5, 140), (6, 180)] {
+			System::set_block_number(block);
+			for v in &set {
+				ProofOfTrust::note_author(*v);
+			}
+			set = plan(session);
+		}
+		assert!(Strikes::<Test>::iter().next().is_none());
+		assert!(Offline::<Test>::iter().next().is_none());
+		assert_eq!(set.len(), 5);
+		assert_ok!(ProofOfTrust::withdraw(RuntimeOrigin::signed(21)));
+		assert!(!crate::LastServed::<Test>::contains_key(21));
+	});
+}

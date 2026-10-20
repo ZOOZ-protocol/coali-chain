@@ -360,7 +360,7 @@ const tokenEvents = (section, field, id, p) =>
 
 const routes = {
   async stats() {
-    const [best, validators, issuance, minTrust, price, targetFee, split, reward, halving, fuel, names] = await Promise.all([
+    const [best, validators, issuance, minTrust, price, targetFee, split, reward, halving, monthly, fuel, names] = await Promise.all([
       api.rpc.chain.getHeader(),
       api.query.session.validators(),
       api.query.balances.totalIssuance(),
@@ -370,9 +370,23 @@ const routes = {
       api.query.zoozEconomy.feeSplit(),
       api.query.zoozEconomy.blockReward(),
       api.query.zoozEconomy.halvingInterval(),
+      // Absent before runtime 206 (flat block reward).
+      api.query.zoozEconomy.validatorRewardMicroUsd?.() ?? null,
       api.query.system.account(bucketAddr(BUCKETS.Fuel)),
       labels(),
     ]);
+    const height = BigInt(best.number.toNumber());
+    const interval = BigInt(halving.toNumber());
+    const halvings = interval > 0n ? height / interval : 0n;
+    const cap = halvings >= 128n ? 0n : reward.toBigInt() >> halvings;
+    const blocksPerMonth = BigInt(api.consts.zoozEconomy.blocksPerMonth?.toString() ?? 0);
+    let perBlock = cap;
+    if (monthly && blocksPerMonth > 0n) {
+      const pegged =
+        (monthly.toBigInt() * BigInt(validators.length) * 10n ** BigInt(token.decimals)) /
+        (blocksPerMonth * BigInt(Math.max(1, price.toNumber())));
+      perBlock = pegged < cap ? pegged : cap;
+    }
     const priceAt = q("SELECT n, ts FROM evs WHERE section='zoozEconomy' AND method='PriceSet' ORDER BY n DESC LIMIT 1").get();
     const last = q("SELECT n, ts FROM blocks ORDER BY n DESC LIMIT 1").get();
     const old = last ? q("SELECT n, ts FROM blocks WHERE n=?").get(Math.max(1, last.n - 100)) : null;
@@ -401,7 +415,9 @@ const routes = {
         priceUpdated: priceAt?.ts ?? null,
         targetFeeUsd: targetFee.toNumber() / 1e6,
         split: { author: split[0].toNumber(), foundation: split[1].toNumber(), app: 100 - split[0].toNumber() - split[1].toNumber() },
-        blockReward: reward.toString(),
+        blockReward: perBlock.toString(),
+        blockRewardCap: cap.toString(),
+        validatorRewardUsd: monthly ? monthly.toNumber() / 1e6 : null,
         halvingInterval: halving.toNumber(),
         fuel: fuel.data.free.toString(),
       },

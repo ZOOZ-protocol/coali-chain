@@ -346,11 +346,20 @@ impl frame_support::traits::Contains<AccountId> for ApprovedApps {
 	}
 }
 
+/// Validators of the current session, which share the block rewards.
+pub struct SessionValidatorCount;
+impl frame_support::traits::Get<u32> for SessionValidatorCount {
+	fn get() -> u32 {
+		pallet_session::Validators::<Runtime>::decode_len().unwrap_or(0) as u32
+	}
+}
+
 parameter_types! {
 	/// Calibrated so that a 250-byte `record_vote` (1,656M ref_time with the benchmarked weights
 	/// and their margin, plus the extrinsic base weight and the length fee) costs the target fee;
 	/// checked by runtime/tests/fees.rs.
 	pub const ZoozReferenceWeight: u64 = 1_997_000_000;
+	pub const ZoozBlocksPerMonth: u32 = 30 * DAYS;
 }
 
 impl pallet_zooz_economy::Config for Runtime {
@@ -360,6 +369,8 @@ impl pallet_zooz_economy::Config for Runtime {
 	type IsApp = ApprovedApps;
 	type Unit = ConstU128<UNIT>;
 	type ReferenceWeight = ZoozReferenceWeight;
+	type ValidatorCount = SessionValidatorCount;
+	type BlocksPerMonth = ZoozBlocksPerMonth;
 }
 
 /// Token ids are handed out in order, starting here.
