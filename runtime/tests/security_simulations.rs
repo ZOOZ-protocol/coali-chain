@@ -316,6 +316,7 @@ mod blocked {
 			let payload = CoaliLedger::trust_payload(&who, &trusted, 21, TrustAction::Give, 0);
 			let sig = MultiSignature::Sr25519(g.sign(&payload));
 			assert_ok!(CoaliLedger::record_trust(as_attester(), who.clone(), trusted.clone(), 21, TrustAction::Give, 0, sig.clone()));
+			set_time(START_MS + 3_600_000 + 1);
 			let revoke = CoaliLedger::trust_payload(&who, &trusted, 21, TrustAction::Revoke, 1);
 			assert_ok!(CoaliLedger::record_trust(
 				as_attester(), who.clone(), trusted.clone(), 21, TrustAction::Revoke, 1,

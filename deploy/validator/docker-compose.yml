@@ -17,6 +17,8 @@ services:
       - --rpc-methods=safe
       - --prometheus-external
       - --prometheus-port=9615
+      - --pool-limit=8192
+      - --pool-kbytes=20480
     ports:
       - "30333:30333"
       - "127.0.0.1:9944:9944"

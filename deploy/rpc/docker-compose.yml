@@ -1,7 +1,8 @@
 # Public access server: archive RPC node, Coaliscan explorer (scan + static site), Polkadot.js Apps, faucet, Caddy (TLS),
 # the finality watchdog / price oracle. The relayer runs on a validator server (deploy/relayer).
 # Expects: .env (DOMAIN, ACME_EMAIL, IMAGE), spec/coali-testnet-raw.json, faucet.env (FAUCET_URI),
-# watchdog.env (WATCHDOG_URI: proxy key limited to forced finality changes; ORACLE_URI: oracle account).
+# watchdog.env (WATCHDOG_URI: proxy key limited to forced finality changes; ORACLE_URI: oracle account),
+# scan.env (ALERT_PHONE, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: explorer stall alert, mode 600).
 # No sudo key on this server (security/AUDIT-PRE-2026-10.md, ZOOZ-08).
 services:
   rpc:
@@ -29,6 +30,8 @@ services:
       - --rpc-max-subscriptions-per-connection=256
       - --state-pruning=archive
       - --blocks-pruning=archive-canonical
+      - --pool-limit=8192
+      - --pool-kbytes=20480
     ports:
       - "30333:30333"
     networks:
@@ -90,11 +93,12 @@ services:
       default: {}
       backend:
         ipv4_address: 10.77.0.11
+    env_file: scan.env
     environment:
       CHAIN_WS: ws://rpc-internal:9944
       DB_PATH: /data/scan.db
       # Name tags shown in the explorer (address=Name, comma-separated).
-      LABELS: 5Ece69BkcArVJVVRhrezvMYFf6rtyT5ohsyRChqizQhEFcxM=Popolitica,5Gxe4rSwUpDXHkZQxw48uweZGpXvJLL4EWqHAsUkQJvg16at=Faucet
+      LABELS: 5Ece69BkcArVJVVRhrezvMYFf6rtyT5ohsyRChqizQhEFcxM=Emunify,5Gxe4rSwUpDXHkZQxw48uweZGpXvJLL4EWqHAsUkQJvg16at=Faucet,5EtBSz7GZiGQzzVm7YuK1AwfFCgD19BggYyiaJuE5qWSUsTD=Emunify welcome
     volumes:
       - scan-data:/data
     depends_on: [rpc]

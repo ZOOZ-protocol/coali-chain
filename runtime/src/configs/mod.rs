@@ -329,6 +329,8 @@ impl frame_support::traits::Contains<AccountId> for ValidatorsWithKeys {
 parameter_types! {
 	/// Domain separator mixed into every voter/truster signature; must differ per network.
 	pub const CoaliChainTag: [u8; 8] = *b"coali-01";
+	/// `record_trust` may use at most this share of the normal-class block weight.
+	pub const TrustBlockQuota: Perbill = Perbill::from_percent(15);
 }
 
 impl pallet_coali_ledger::Config for Runtime {
@@ -342,6 +344,9 @@ impl pallet_coali_ledger::Config for Runtime {
 	type MinVotingPeriod = ConstU64<{ 3_600 * 1_000 }>;
 	type VoteGrace = ConstU64<{ 24 * 3_600 * 1_000 }>;
 	type MaxRevealsPerCall = ConstU32<100>;
+	type MaxTrustsPerBlock = ConstU32<32>;
+	type TrustBlockQuota = TrustBlockQuota;
+	type TrustChangePeriod = ConstU64<{ 3_600 * 1_000 }>;
 	type OnTrustChanged = ProofOfTrust;
 	type OnAttesterRemoved = ProofOfTrust;
 	type WeightInfo = pallet_coali_ledger::weights::Margin<pallet_coali_ledger::weights::SubstrateWeight<Runtime>, 3>;

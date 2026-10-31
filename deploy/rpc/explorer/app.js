@@ -17,7 +17,12 @@ function setLang(l) {
   L = l;
   document.cookie = `lang=${l};domain=.testnet.zooz.network;path=/;max-age=31536000;samesite=lax`;
   document.cookie = `lang=${l};path=/;max-age=31536000;samesite=lax`;
+  paintNotice();
   route();
+}
+function paintNotice() {
+  const n = document.getElementById("notice");
+  if (n) n.innerHTML = `<div class="in"><a href="https://zooz.network/transparency">${t("Testnet: the admin key is kept offline. Transparency.", "Testnet : la clé d'administration est hors ligne. Transparence.")}</a></div>`;
 }
 const t = (en, fr) => (L === "fr" ? fr : en);
 
@@ -558,7 +563,7 @@ async function decisionPage(id) {
       const n = Number(latest.totals[id] ?? 0);
       const pct = total ? Math.round((n * 100) / total) : 0;
       const label = opts.find((o) => o.id === id)?.text ?? id;
-      return `<div class="res"><div class="res-l"><span dir="auto">${esc(label)}</span><span><b>${num(n)}</b> <span class="muted">(${pct}%)</span></span></div><div class="res-bar"><i style="width:${pct}%"></i></div></div>`;
+      return `<div class="res" data-opt="${esc(id)}" data-n="${n}"><div class="res-l"><span dir="auto">${esc(label)}</span><span><b>${num(n)}</b> <span class="muted">(${pct}%)</span></span></div><div class="res-bar"><i style="width:${pct}%"></i></div></div>`;
     });
     // Runtime 204+: the chain itself checked that the totals add up to the votes it recorded.
     // Earlier results only match the fingerprint the app published.
@@ -571,14 +576,23 @@ async function decisionPage(id) {
       ? `<span class="tag ok" title="${esc(t("The chain accepted these totals only because they add up to the votes it recorded for this decision.", "La chaîne n'a accepté ces totaux que parce qu'ils correspondent au nombre de votes qu'elle a enregistrés pour cette décision."))}">✓ ${t(`Matches the ${num(latest.checked.voteCount)} votes on the chain`, `Correspond aux ${num(latest.checked.voteCount)} votes de la chaîne`)}</span>`
       : `<span class="tag" title="${esc(t("Published before runtime 204: these totals match the fingerprint the app published with the snapshot.", "Publiés avant le runtime 204 : ces totaux correspondent à l'empreinte publiée par l'app avec l'instantané."))}">${t("Matches the fingerprint published by the app", "Correspond à l'empreinte publiée par l'app")}</span>`);
     resultsCard = `<div class="card" style="margin-bottom:18px"><div class="card-h"><span>${t("Results published on the chain", "Résultats publiés sur la chaîne")}</span>${badge}</div>
-    <div style="padding:16px">${rows.join("")}<div class="muted sm" style="margin-top:10px">${num(total)} ${t("votes", "votes")} · ${t("snapshot", "instantané")} #${latest.seq} · ${latest.isFinal ? t("final", "définitif") : t("interim", "intermédiaire")} · ${t("block", "bloc")} ${blk(latest.publishedAt)}</div></div></div>`;
+    <div style="padding:16px" id="published-results">${rows.join("")}<div class="muted sm" style="margin-top:10px">${num(total)} ${t("votes", "votes")} · ${t("snapshot", "instantané")} #${latest.seq} · ${latest.isFinal ? t("final", "définitif") : t("interim", "intermédiaire")} · ${t("block", "bloc")} ${blk(latest.publishedAt)}</div></div></div>`;
   }
+  const countBox = `<div class="card" style="margin-bottom:18px"><div style="padding:16px">
+    <button class="btn" type="button" id="count-btn" onclick="countResults('${esc(d.id)}')">${t("Count the results", "Compter les résultats")}</button>
+    <div id="count-out" style="margin-top:12px"></div>
+  </div></div>`;
   const question = d.content?.question
-    ? `<div class="card" style="margin-bottom:18px"><div class="card-h"><span dir="auto">❓ ${esc(d.content.question)}</span><span class="tag ok" title="${esc(t("This text matches, letter for letter, the fingerprint recorded when the vote opened.", "Ce texte correspond, lettre pour lettre, à l'empreinte enregistrée à l'ouverture du vote."))}">✓ ${t("Original text", "Texte d'origine")}</span></div></div>`
+    ? `<div class="card" style="margin-bottom:18px"><div class="card-h"><span dir="auto">❓ ${esc(d.content.question)}</span><span class="tag ok" title="${esc(t("This text matches, letter for letter, the fingerprint recorded when the vote opened. The answers below are part of that same text.", "Ce texte correspond, lettre pour lettre, à l'empreinte enregistrée à l'ouverture du vote. Les réponses ci-dessous font partie de ce même texte."))}">✓ ${t("Original text", "Texte d'origine")}</span></div></div>`
     : `<div class="note">${t("The text of this decision is not published yet. The chain keeps its fingerprint, every anonymous vote and the results, so that nothing can be changed afterwards.", "Le texte de cette décision n'est pas encore publié. La chaîne garde son empreinte, chaque vote anonyme et les résultats, pour que rien ne puisse être modifié après coup.")}</div>`;
+  const optionList = opts.length
+    ? `<div class="card" style="margin-bottom:18px"><div class="card-h">${t("Possible answers", "Réponses possibles")}</div><div style="padding:14px 16px">${opts.map((o) => `<div style="margin:6px 0"><span dir="auto">${esc(o.text)}</span> <span class="muted sm mono">${esc(o.id)}</span></div>`).join("")}</div></div>`
+    : "";
   app().innerHTML = `${title(t("Decision", "Décision"), `<span class="mono">${esc(d.id)}</span> ${copyBtn(d.id)} ${d.closed || fin ? `<span class="tag">${t("Closed", "Clôturée")}</span>` : `<span class="tag ok">${t("Open to votes", "Vote ouvert")}</span>`}`)}
   ${question}
+  ${optionList}
   ${resultsCard}
+  ${countBox}
   <div class="card kv">
     ${kvRow(t("Votes recorded", "Votes enregistrés"), `<b>${num(d.votes)}</b>${d.maxVoters !== null ? ` <span class="muted">/ ${num(d.maxVoters)} ${t("eligible voters declared by the app", "électeurs éligibles déclarés par l'app")}</span>` : ""}`, t("Votes are signed with keys the app holds for its users; the chain refuses more votes than the electorate the app declared publicly.", "Les votes sont signés avec des clés que l'app détient pour ses utilisateurs ; la chaîne refuse plus de votes que l'électorat déclaré publiquement par l'app."))}
     ${d.endsAt ? kvRow(t("Voting ends", "Fin du vote"), `🕒 ${date(d.endsAt)}`, t("The chain refuses final results before this time", "La chaîne refuse des résultats définitifs avant cette date")) : ""}
@@ -592,8 +606,61 @@ async function decisionPage(id) {
     ${snaps.map((e) => `<tr><td>#${esc(e.data.seq)}</td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td class="mono sm">${esc(short(e.data.merkleRoot, 14))}</td><td>${e.data.isFinal ? `<span class="tag ok">${t("final", "définitif")}</span>` : `<span class="tag">${t("interim", "intermédiaire")}</span>`}</td><td><a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a></td></tr>`).join("")}</tbody></table></div>` : ""}
   <div class="card scroll" style="margin-top:18px"><div class="card-h">${t("Anonymous votes", "Votes anonymes")} (${num(d.votes)})</div>
   ${votes.length ? `<table><thead><tr><th>${t("One-time voter address", "Adresse de vote unique")} ${help(t("Created for this vote only: not linked to a person", "Créée pour ce vote uniquement : non reliée à une personne"))}</th><th>${t("Type", "Type")}</th><th>${t("Choice", "Choix")}</th><th>${t("Block", "Bloc")}</th><th>${t("Age", "Âge")}</th><th></th></tr></thead><tbody>
-    ${votes.map((e) => `<tr><td>${addr(e.data.voter, 8)}</td><td>${JSON.stringify(e.data.kind).includes("Inferred") ? `<span class="tag acc">${t("From board", "Via board")}</span>` : `<span class="tag">${t("Direct", "Direct")}</span>`}</td><td title="${esc(e.data.commitment)}">🔒 <span class="muted">${t("sealed", "scellé")}</span></td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td><a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a></td></tr>`).join("")}</tbody></table>` : `<div class="empty">${t("No vote yet.", "Aucun vote pour l'instant.")}</div>`}</div>`;
+    ${votes.map((e) => `<tr><td>${addr(e.data.voter, 8)}</td><td>${JSON.stringify(e.data.kind).includes("Inferred") ? `<span class="tag acc">${t("From board", "Via board")}</span>` : `<span class="tag">${t("Direct", "Direct")}</span>`}</td><td class="choice" data-voter="${esc(e.data.voter)}" title="${esc(e.data.commitment)}">🔒 <span class="muted">${t("sealed", "scellé")}</span></td><td>${blk(e.n)}</td><td class="muted">${ago(e.ts)}</td><td><a href="/tx/${e.n}-${e.x}">${t("details", "détails")}</a></td></tr>`).join("")}</tbody></table>` : `<div class="empty">${t("No vote yet.", "Aucun vote pour l'instant.")}</div>`}</div>`;
 }
+
+async function countResults(id) {
+  const btn = document.getElementById("count-btn");
+  const out = document.getElementById("count-out");
+  if (!out) return;
+  btn.disabled = true;
+  out.innerHTML = `<span class="muted">${t("Counting…", "Comptage…")}</span>`;
+  try {
+    const c = await get(`/count/${encodeURIComponent(id)}`);
+    if (!c) {
+      out.innerHTML = `<span class="tag bad">${t("Decision not found on chain.", "Décision introuvable sur la chaîne.")}</span>`;
+      return;
+    }
+    if (!c.closed) {
+      out.innerHTML = `<span class="muted">${t(`The vote is still open. The chain has recorded ${num(c.votes)} votes. The choices stay sealed until it closes.`, `Le vote est encore ouvert. La chaîne a enregistré ${num(c.votes)} votes. Les choix restent scellés jusqu'à la clôture.`)}</span>`;
+      return;
+    }
+    const opts = [...document.querySelectorAll("[data-opt]")].map((el) => el.dataset.opt);
+    const names = {};
+    document.querySelectorAll("[data-opt]").forEach((el) => {
+      names[el.dataset.opt] = el.querySelector(".res-l span")?.textContent ?? el.dataset.opt;
+    });
+    const tally = c.revealedTally ?? [];
+    const ids = [...new Set([...opts, ...tally.map((x) => x.option)])];
+    const rows = ids.map((opt) => {
+      const chain = tally.find((x) => x.option === opt);
+      const n = chain ? chain.count : 0;
+      const label = names[opt] ?? opt;
+      const row = document.querySelector(`[data-opt="${CSS.escape(opt)}"]`);
+      const published = row?.dataset.n != null ? Number(row.dataset.n) : null;
+      const same = published != null && published === n;
+      return `<div style="margin:6px 0"><span dir="auto">${esc(label)}</span> · ${t("Counted by the chain", "Compté par la chaîne")} : <b>${num(n)}</b>${published != null ? ` <span class="muted">${t("published", "publié")} ${num(published)}</span> ${same ? `<span class="tag ok">✓</span>` : `<span class="tag bad">✕</span>`}` : ""}</div>`;
+    });
+    const badge = c.recount
+      ? c.recount.matches
+        ? `<span class="tag ok">✓ ${t("Same as the published results", "Identique aux résultats publiés")}</span>`
+        : `<span class="tag bad">✕ ${t("Different from the published results", "Différent des résultats publiés")}</span>`
+      : `<span class="muted">${t(`${num(c.revealed)} of ${num(c.votes)} votes opened. The chain counts once they all are.`, `${num(c.revealed)} votes ouverts sur ${num(c.votes)}. La chaîne compte quand ils le sont tous.`)}</span>`;
+    out.innerHTML = `${badge}<div style="margin-top:10px">${rows.join("") || `<span class="muted">${t("No opened vote yet.", "Aucun vote ouvert pour l'instant.")}</span>`}</div>`;
+    document.querySelectorAll("td.choice").forEach((td) => {
+      const opt = c.reveals?.[td.dataset.voter];
+      if (!opt) return;
+      const label = names[opt] ?? opt;
+      td.innerHTML = `<span dir="auto">${esc(label)}</span>`;
+    });
+  } catch (e) {
+    console.error(e);
+    out.innerHTML = `<span class="tag bad">${t("The count failed. Try again.", "Le comptage a échoué. Réessayez.")}</span>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+window.countResults = countResults;
 
 // Recomputes blake2_256("coali/commit/v1|decision|option|secret") in the browser and compares it
 // with the commitment stored on chain for the voter's one-time address.
@@ -603,13 +670,31 @@ async function verifyPage(p) {
   <div class="note">${t("Your app gave you the secret of your vote (Popolitica: « My blockchain proofs »). This page recomputes the vote fingerprint from the decision, your choice and your secret, directly in your browser, and compares it with the one written on the chain. If they match, the chain holds exactly the choice you made. Nothing is sent anywhere.", "Votre app vous donne le secret de votre vote (Popolitica : « Mes preuves Blockchain »). Cette page recalcule l'empreinte du vote à partir de la décision, de votre choix et de votre secret, directement dans votre navigateur, et la compare à celle écrite sur la chaîne. Si elles sont identiques, la chaîne contient exactement le choix que vous avez fait. Rien n'est envoyé nulle part.")}</div>
   <form class="card kv vform" onsubmit="return runVerify(event)">
     ${field("d", t("Decision (id)", "Décision (id)"), "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")}
-    ${field("o", t("Your choice (option id)", "Votre choix (id de l'option)"), "yes")}
+    <label class="vf" id="vf-o-wrap"><span>${t("Your choice", "Votre choix")}</span><input id="vf-o" class="mono" value="${esc(p.o ?? "")}" placeholder="${esc(t("option id", "id de l'option"))}" spellcheck="false" autocomplete="off"></label>
     ${field("s", t("Your secret", "Votre secret"), "64 hex")}
     ${field("v", t("One-time voter address", "Adresse de vote unique"), "5…")}
     <button class="btn" type="submit">${t("Verify", "Vérifier")}</button>
   </form>
   <div id="vf-out"></div>`;
+  document.getElementById("vf-d").addEventListener("change", () => fillChoice());
+  if (p.d) await fillChoice();
   if (p.d && p.o && p.s && p.v) runVerify();
+}
+
+let vfOpts = [];
+async function fillChoice() {
+  const raw = document.getElementById("vf-d").value.trim().toLowerCase();
+  const current = document.getElementById("vf-o")?.value ?? "";
+  const wrap = document.getElementById("vf-o-wrap");
+  vfOpts = [];
+  if (!raw || !wrap) return;
+  const id = raw.startsWith("0x") ? raw : "0x" + raw.replace(/-/g, "");
+  const dec = await get(`/decision/${encodeURIComponent(id)}`);
+  const opts = dec?.content?.options ?? [];
+  if (!opts.length || (current && !opts.some((o) => o.id === current))) return;
+  vfOpts = opts;
+  const sel = `<select id="vf-o" dir="auto" style="border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:13px;min-width:0;width:100%">${opts.map((o) => `<option value="${esc(o.id)}"${o.id === current ? " selected" : ""}>${esc(o.text)}</option>`).join("")}</select>`;
+  wrap.innerHTML = `<span>${t("Your choice", "Votre choix")}</span>${sel}`;
 }
 
 async function runVerify(evt) {
@@ -626,6 +711,7 @@ async function runVerify(evt) {
     const rec = await get(`/vote/${encodeURIComponent(id)}?voter=${encodeURIComponent(v)}`);
     const ok = rec && rec.commitment.toLowerCase() === mine;
     out.innerHTML = `<div class="card kv" style="margin-top:18px">
+      ${(() => { const name = vfOpts.find((x) => x.id === o)?.text; return name ? kvRow(t("Choice", "Choix"), `<span dir="auto">${esc(name)}</span>`) : ""; })()}
       ${kvRow(t("Result", "Résultat"), ok
         ? `<span class="tag ok">✓ ${t("Match: the chain holds exactly this choice", "Identique : la chaîne contient exactement ce choix")}</span>`
         : rec
@@ -830,6 +916,7 @@ function go(path) {
 
 async function route() {
   clearInterval(timer);
+  paintNotice();
   chrome();
   const legacy = location.hash.match(/^#\/explorer\/query\/(\w+)/);
   if (legacy) return go(`/block/${legacy[1]}`);

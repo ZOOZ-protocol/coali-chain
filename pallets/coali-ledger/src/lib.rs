@@ -399,6 +399,14 @@ pub mod pallet {
 		/// Votes revealed per call.
 		#[pallet::constant]
 		type MaxRevealsPerCall: Get<u32>;
+		/// `record_trust` calls one attester may land in a single block (runtime 209).
+		#[pallet::constant]
+		type MaxTrustsPerBlock: Get<u32>;
+		/// Share of the normal-class block weight that `record_trust` may use in one block.
+		type TrustBlockQuota: Get<sp_runtime::Perbill>;
+		/// Minimum time between two changes of the same (truster, trusted, category), unix ms.
+		#[pallet::constant]
+		type TrustChangePeriod: Get<u64>;
 		type OnTrustChanged: OnTrustChanged<Self::AccountId>;
 		type OnAttesterRemoved: OnAttesterRemoved<Self::AccountId>;
 		type WeightInfo: WeightInfo;
@@ -513,6 +521,28 @@ pub mod pallet {
 			NMapKey<Twox64Concat, u32>,
 		),
 		T::AccountId,
+		OptionQuery,
+	>;
+
+	/// (block, count) of successful `record_trust` calls by this attester in that block.
+	#[pallet::storage]
+	pub type TrustsByAttesterInBlock<T: Config> =
+		StorageMap<_, Blake2_128Concat, T::AccountId, (BlockNumberFor<T>, u32), ValueQuery>;
+
+	/// (block, ref_time) consumed by successful `record_trust` calls in that block.
+	#[pallet::storage]
+	pub type TrustWeightInBlock<T: Config> = StorageValue<_, (BlockNumberFor<T>, u64), ValueQuery>;
+
+	/// Unix ms of the last change of an edge. A second change before `TrustChangePeriod` is `TooSoon`.
+	#[pallet::storage]
+	pub type TrustChangedAt<T: Config> = StorageNMap<
+		_,
+		(
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Blake2_128Concat, T::AccountId>,
+			NMapKey<Twox64Concat, u32>,
+		),
+		u64,
 		OptionQuery,
 	>;
 
@@ -703,6 +733,10 @@ pub mod pallet {
 		CategoryInUse,
 		/// Trust is given in categories of the registry only.
 		UnknownCategory,
+		/// This block already holds the trust quota (per attester, or of the normal-class weight).
+		QuotaExceeded,
+		/// This edge (truster, trusted, category) already changed during `TrustChangePeriod`.
+		TooSoon,
 	}
 
 	#[pallet::call]
@@ -767,7 +801,7 @@ pub mod pallet {
 		}
 
 		#[pallet::call_index(3)]
-		#[pallet::weight(T::WeightInfo::record_vote())]
+		#[pallet::weight((T::WeightInfo::record_vote(), frame_support::dispatch::DispatchClass::Operational))]
 		pub fn record_vote(
 			origin: OriginFor<T>,
 			decision_id: DecisionId,
@@ -806,7 +840,7 @@ pub mod pallet {
 		}
 
 		#[pallet::call_index(4)]
-		#[pallet::weight(T::WeightInfo::record_trust().saturating_add(T::DbWeight::get().reads_writes(3, 3)))]
+		#[pallet::weight(T::WeightInfo::record_trust().saturating_add(T::DbWeight::get().reads_writes(6, 6)))]
 		pub fn record_trust(
 			origin: OriginFor<T>,
 			truster: T::AccountId,
@@ -828,6 +862,7 @@ pub mod pallet {
 				TrustAction::Give => {
 					ensure!(Categories::<T>::contains_key(category), Error::<T>::UnknownCategory);
 					ensure!(!TrustEdges::<T>::contains_key(&key), Error::<T>::AlreadyTrusted);
+					Self::note_trust_change(&app, &key)?;
 					TrustEdges::<T>::insert(&key, frame_system::Pallet::<T>::block_number());
 					Self::count_trust(&key, Some(&app));
 					let categories = TrustPairs::<T>::get(&trusted, &truster);
@@ -839,6 +874,7 @@ pub mod pallet {
 				},
 				TrustAction::Revoke => {
 					ensure!(TrustEdges::<T>::contains_key(&key), Error::<T>::TrustNotFound);
+					Self::note_trust_change(&app, &key)?;
 					TrustEdges::<T>::remove(&key);
 					Self::count_trust(&key, None);
 					let categories = TrustPairs::<T>::get(&trusted, &truster).saturating_sub(1);
@@ -862,7 +898,10 @@ pub mod pallet {
 		/// log beside the Merkle root (`MERKLE_VERSION`). The final snapshot closes the decision
 		/// and is refused before the decision's end time.
 		#[pallet::call_index(5)]
-		#[pallet::weight(T::WeightInfo::publish_snapshot(totals.len() as u32))]
+		#[pallet::weight((
+			T::WeightInfo::publish_snapshot(totals.len() as u32),
+			frame_support::dispatch::DispatchClass::Operational,
+		))]
 		pub fn publish_snapshot(
 			origin: OriginFor<T>,
 			decision_id: DecisionId,
@@ -1028,7 +1067,10 @@ pub mod pallet {
 		/// recorded at voting time. When every vote is revealed, the chain compares its own count
 		/// with the final totals (`RecountOf`).
 		#[pallet::call_index(11)]
-		#[pallet::weight(T::WeightInfo::reveal_votes(reveals.len() as u32))]
+		#[pallet::weight((
+			T::WeightInfo::reveal_votes(reveals.len() as u32),
+			frame_support::dispatch::DispatchClass::Operational,
+		))]
 		pub fn reveal_votes(
 			origin: OriginFor<T>,
 			decision_id: DecisionId,
@@ -1100,6 +1142,38 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		pub(crate) fn now() -> u64 {
 			T::Time::now().as_millis().min(u64::MAX as u128) as u64
+		}
+
+		/// Refuses when this attester, or the block, is over the trust quota, or when this edge
+		/// already changed during `TrustChangePeriod`. Counts the call when it passes.
+		fn note_trust_change(app: &T::AccountId, edge: &(T::AccountId, T::AccountId, u32)) -> DispatchResult {
+			let now = Self::now();
+			if let Some(at) = TrustChangedAt::<T>::get((edge.0.clone(), edge.1.clone(), edge.2)) {
+				ensure!(now.saturating_sub(at) >= T::TrustChangePeriod::get(), Error::<T>::TooSoon);
+			}
+			let block = frame_system::Pallet::<T>::block_number();
+			let (seen, n) = TrustsByAttesterInBlock::<T>::get(app);
+			let n = if seen == block { n } else { 0 };
+			ensure!(n < T::MaxTrustsPerBlock::get(), Error::<T>::QuotaExceeded);
+
+			let weights = <T as frame_system::Config>::BlockWeights::get();
+			let normal = weights.get(frame_support::dispatch::DispatchClass::Normal);
+			let cap = (T::TrustBlockQuota::get() * normal.max_total.unwrap_or_default()).ref_time();
+			let added = Self::trust_call_weight().ref_time();
+			let (wblock, used) = TrustWeightInBlock::<T>::get();
+			let used = if wblock == block { used } else { 0 };
+			let next = used.saturating_add(added);
+			ensure!(next <= cap, Error::<T>::QuotaExceeded);
+
+			TrustChangedAt::<T>::insert((edge.0.clone(), edge.1.clone(), edge.2), now);
+			TrustsByAttesterInBlock::<T>::insert(app, (block, n.saturating_add(1)));
+			TrustWeightInBlock::<T>::put((block, next));
+			Ok(())
+		}
+
+		/// Weight charged for `record_trust`, including the quota storage.
+		fn trust_call_weight() -> frame_support::weights::Weight {
+			T::WeightInfo::record_trust().saturating_add(T::DbWeight::get().reads_writes(6, 6))
 		}
 
 		fn check_rules(attester: &T::AccountId, ends_at: u64, max_voters: u32) -> DispatchResult {

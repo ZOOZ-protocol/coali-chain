@@ -470,6 +470,7 @@ fn trust_give_and_revoke_with_nonces() {
 			Error::<Test>::AlreadyTrusted
 		);
 
+		hour_later();
 		let (_, sig1r) = signed_trust("Citizen", &trusted, 21, TrustAction::Revoke, 1);
 		assert_ok!(Ledger::record_trust(origin(), truster.clone(), trusted.clone(), 21, TrustAction::Revoke, 1, sig1r));
 		assert!(!TrustEdges::<Test>::contains_key((truster.clone(), trusted.clone(), 21)));
@@ -505,6 +506,7 @@ fn trust_received_counts_distinct_trusters() {
 		use crate::TrustScore;
 		let rep = account(&pair("Rep"));
 		let give = |seed: &str, category: u32, action: TrustAction, nonce: u32| {
+			hour_later();
 			let (truster, sig) = signed_trust(seed, &rep, category, action, nonce);
 			assert_ok!(Ledger::record_trust(origin(), truster, rep.clone(), category, action, nonce, sig));
 		};
@@ -528,8 +530,14 @@ fn seed_categories() {
 	crate::migrations::InnerMigrateV1ToV2::<Test>::on_runtime_upgrade();
 }
 
+/// Moves chain time past the one-change-per-edge hour.
+fn hour_later() {
+	set_now(Now::get().saturating_add(TrustChangePeriod::get()).saturating_add(1));
+}
+
 /// `truster` gives (or revokes) trust to `trusted` in `category`, through `app`.
 fn trust_via(app: &AccountId32, truster: &str, trusted: &AccountId32, category: u32, action: TrustAction) {
+	hour_later();
 	let nonce = TrustNonces::<Test>::get(account(&pair(truster)));
 	let (who, sig) = signed_trust(truster, trusted, category, action, nonce);
 	assert_ok!(Ledger::record_trust(RuntimeOrigin::signed(app.clone()), who, trusted.clone(), category, action, nonce, sig));
@@ -686,5 +694,83 @@ fn trust_needs_a_registered_category_but_old_ones_can_be_revoked() {
 		trust_via(&attester(), "a", &rep, 99, TrustAction::Revoke);
 		assert!(!TrustReceivedIn::<Test>::contains_key(&rep, 99u32));
 		assert!(!CategoryUse::<Test>::contains_key(99u32));
+	});
+}
+
+#[test]
+fn votes_use_the_reserved_lane_and_trusts_stay_normal() {
+	use frame_support::dispatch::{DispatchClass, GetDispatchInfo};
+	use sp_core::sr25519;
+	let sig = MultiSignature::Sr25519(sr25519::Signature::from_raw([1u8; 64]));
+	let who = attester();
+	assert_eq!(
+		crate::Call::<Test>::record_vote {
+			decision_id: D1,
+			voter: who.clone(),
+			commitment: [0; 32],
+			kind: VoteKind::Direct,
+			voter_signature: sig.clone(),
+		}
+		.get_dispatch_info()
+		.class,
+		DispatchClass::Operational
+	);
+	assert_eq!(
+		crate::Call::<Test>::publish_snapshot {
+			decision_id: D1,
+			seq: 0,
+			merkle_root: [0; 32],
+			totals: bounded::<crate::MaxTotalsLen>(b"{}"),
+			is_final: false,
+		}
+		.get_dispatch_info()
+		.class,
+		DispatchClass::Operational
+	);
+	assert_eq!(
+		crate::Call::<Test>::reveal_votes { decision_id: D1, reveals: vec![] }.get_dispatch_info().class,
+		DispatchClass::Operational
+	);
+	assert_eq!(
+		crate::Call::<Test>::record_trust {
+			truster: who.clone(),
+			trusted: who,
+			category: 1,
+			action: TrustAction::Give,
+			nonce: 0,
+			truster_signature: sig,
+		}
+		.get_dispatch_info()
+		.class,
+		DispatchClass::Normal
+	);
+}
+
+#[test]
+fn one_edge_changes_once_per_hour_and_a_block_holds_thirty_two() {
+	new_test_ext().execute_with(|| {
+		let trusted = account(&pair("Rep"));
+		let (truster, sig0) = signed_trust("Citizen", &trusted, 21, TrustAction::Give, 0);
+		assert_ok!(Ledger::record_trust(origin(), truster.clone(), trusted.clone(), 21, TrustAction::Give, 0, sig0));
+		let (_, sig1) = signed_trust("Citizen", &trusted, 21, TrustAction::Revoke, 1);
+		assert_noop!(
+			Ledger::record_trust(origin(), truster.clone(), trusted.clone(), 21, TrustAction::Revoke, 1, sig1.clone()),
+			Error::<Test>::TooSoon
+		);
+		hour_later();
+		assert_ok!(Ledger::record_trust(origin(), truster, trusted.clone(), 21, TrustAction::Revoke, 1, sig1));
+
+		System::set_block_number(2);
+		MaxTrustsPerBlock::set(2);
+		let (a, sa) = signed_trust("a", &trusted, 1, TrustAction::Give, 0);
+		assert_ok!(Ledger::record_trust(origin(), a, trusted.clone(), 1, TrustAction::Give, 0, sa));
+		let (b, sb) = signed_trust("b", &trusted, 1, TrustAction::Give, 0);
+		assert_ok!(Ledger::record_trust(origin(), b, trusted.clone(), 1, TrustAction::Give, 0, sb));
+		let (c, sc) = signed_trust("c", &trusted, 1, TrustAction::Give, 0);
+		assert_noop!(
+			Ledger::record_trust(origin(), c, trusted, 1, TrustAction::Give, 0, sc),
+			Error::<Test>::QuotaExceeded
+		);
+		MaxTrustsPerBlock::set(32);
 	});
 }

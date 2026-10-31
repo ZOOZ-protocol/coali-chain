@@ -16,6 +16,8 @@ services:
       - --port=30334
       - --rpc-port=9944
       - --rpc-methods=safe
+      - --pool-limit=8192
+      - --pool-kbytes=20480
     ports:
       - "30334:30334"
     volumes:

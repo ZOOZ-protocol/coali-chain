@@ -49,6 +49,9 @@ parameter_types! {
 	pub const ChainTag: [u8; 8] = *b"coali-t1";
 	pub static Now: u64 = 0;
 	pub static Removed: Vec<AccountId32> = vec![];
+	pub static MaxTrustsPerBlock: u32 = 32;
+	pub static TrustBlockQuota: sp_runtime::Perbill = sp_runtime::Perbill::from_percent(15);
+	pub static TrustChangePeriod: u64 = 3_600_000;
 }
 
 /// Unix time in ms set by the tests (`set_now`).
@@ -83,6 +86,9 @@ impl pallet_coali_ledger::Config for Test {
 	type MinVotingPeriod = frame_support::traits::ConstU64<3_600_000>;
 	type VoteGrace = frame_support::traits::ConstU64<86_400_000>;
 	type MaxRevealsPerCall = frame_support::traits::ConstU32<100>;
+	type MaxTrustsPerBlock = MaxTrustsPerBlock;
+	type TrustBlockQuota = TrustBlockQuota;
+	type TrustChangePeriod = TrustChangePeriod;
 	type OnTrustChanged = ();
 	type OnAttesterRemoved = RecordRemoval;
 	type WeightInfo = ();

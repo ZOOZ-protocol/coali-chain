@@ -1,7 +1,18 @@
 // Coalichain explorer backend: indexes finalized blocks into SQLite and serves a JSON API.
 // Env: CHAIN_WS (default ws://127.0.0.1:9944), DB_PATH (default /data/scan.db), PORT (default 8090),
 // BATCH (blocks fetched in parallel, default 20), LABELS (name tags: "addr=Name,addr=Name").
+// Alert (optional): ALERT_PHONE, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. Uses the app's
+// send-whatsapp-notification function (WhatsApp, SMS if WhatsApp fails). A message goes out
+// when the index stops moving for ALERT_STALL_MS (default 10 min) while more than
+// ALERT_LAG_BLOCKS (default 100, about 10 min of blocks) behind, or when finality lags by
+// more than ALERT_FINALITY_LAG blocks (default 30), then again every ALERT_REMIND_MS
+// (default 30 min) until it recovers.
+// App check (optional): EXPECT_SECRET. The app server posts to /api/expect (header
+// x-expect-secret, no content) when an action should reach the chain. If no transaction signed
+// by an approved app is indexed within EXPECT_WAIT_MS (default 10 min), same alert channel,
+// reminders every ALERT_REMIND_MS, and one message once app transactions arrive again.
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
@@ -37,13 +48,33 @@ CREATE INDEX IF NOT EXISTS evs_kind ON evs(section, method, n DESC);
 CREATE INDEX IF NOT EXISTS evs_xt ON evs(n, x);
 CREATE TABLE IF NOT EXISTS acts(addr TEXT, n INTEGER, x INTEGER, PRIMARY KEY(addr, n, x));
 CREATE INDEX IF NOT EXISTS acts_addr ON acts(addr, n DESC, x DESC);
+CREATE INDEX IF NOT EXISTS xts_signer_ts ON xts(signer, ts) WHERE signer IS NOT NULL;
+CREATE TABLE IF NOT EXISTS expects(at INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS expect_txs(hash TEXT PRIMARY KEY, at INTEGER);
 `);
 
 const q = (sql) => db.prepare(sql);
 const getMeta = (k) => q("SELECT v FROM meta WHERE k=?").get(k)?.v;
 const setMeta = (k, v) => q("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(k, v);
 
-const api = await ApiPromise.create({ provider: new WsProvider(WS), noInitWarn: true });
+let api;
+let onFinalized = null;
+let listening = false;
+
+async function connect() {
+  if (onFinalized) {
+    try { onFinalized(); } catch {}
+    onFinalized = null;
+  }
+  if (api) {
+    try { await api.disconnect(); } catch {}
+    api = null;
+  }
+  api = await ApiPromise.create({ provider: new WsProvider(WS), noInitWarn: true });
+  if (listening) onFinalized = await api.rpc.chain.subscribeFinalizedHeads(() => sync());
+}
+
+await connect();
 const genesis = api.genesisHash.toHex();
 if (getMeta("genesis") && getMeta("genesis") !== genesis) {
   console.log("new chain detected, resetting index");
@@ -172,6 +203,209 @@ function store({ n, hash, block, events, author }) {
 let finalized = 0;
 let syncing = false;
 
+function writeBlocks(items) {
+  db.exec("BEGIN");
+  try {
+    items.forEach(store);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+// A batch that crosses a runtime upgrade mixes the two versions in the decoder and then
+// fails forever. One block at a time, on a fresh connection, decodes.
+async function indexFrom(next, to) {
+  try {
+    const items = await Promise.all(Array.from({ length: to - next + 1 }, (_, k) => fetchBlock(next + k)));
+    writeBlocks(items);
+    return;
+  } catch (e) {
+    console.error(`batch #${next}-#${to} failed, reconnecting and reading one by one:`, e.message);
+  }
+  await connect();
+  for (let n = next; n <= to; n++) {
+    try {
+      writeBlocks([await fetchBlock(n)]);
+    } catch (e) {
+      console.error(`block #${n} failed, reconnecting:`, e.message);
+      await connect();
+      writeBlocks([await fetchBlock(n)]);
+    }
+  }
+}
+
+const LAG_BLOCKS = Number(process.env.ALERT_LAG_BLOCKS ?? 100);
+const FINALITY_LAG = Number(process.env.ALERT_FINALITY_LAG ?? 30);
+const STALL_MS = Number(process.env.ALERT_STALL_MS ?? 10 * 60 * 1000);
+const REMIND_MS = Number(process.env.ALERT_REMIND_MS ?? 30 * 60 * 1000);
+const ALERT_PHONE = process.env.ALERT_PHONE ?? "";
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+let lastIndexed = -1;
+let lastMoveAt = Date.now();
+let lastAlertAt = 0;
+let alertFailedAt = 0;
+let lastFinalityAlertAt = 0;
+let finalityFailedAt = 0;
+
+async function sendAlert(message) {
+  console.error("ALERT", message);
+  if (!ALERT_PHONE || !SUPABASE_URL || !SERVICE_KEY) {
+    console.error("alert not sent: ALERT_PHONE or Supabase env missing");
+    return;
+  }
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp-notification`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SERVICE_KEY}`,
+      apikey: SERVICE_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ phone: ALERT_PHONE, message }),
+  });
+  const body = await res.text();
+  console.log("alert send", res.status, body.slice(0, 200));
+  if (!res.ok) throw new Error(`alert failed: ${res.status}`);
+}
+
+async function checkLag() {
+  const indexed = q("SELECT MAX(n) m FROM blocks").get().m ?? -1;
+  if (indexed !== lastIndexed) {
+    lastIndexed = indexed;
+    lastMoveAt = Date.now();
+  }
+  const behind = finalized - indexed;
+  if (finalized > 0 && behind > LAG_BLOCKS && Date.now() - lastMoveAt >= STALL_MS) {
+    if (!(lastAlertAt && Date.now() - lastAlertAt < REMIND_MS) && !(alertFailedAt && Date.now() - alertFailedAt < 2 * 60 * 1000)) {
+      try {
+        await sendAlert(
+          `ZOOZ testnet : l'explorateur est bloqué. Chaîne au bloc ${finalized}, explorateur au bloc ${indexed} (retard de ${behind} blocs).`,
+        );
+        lastAlertAt = Date.now();
+        alertFailedAt = 0;
+      } catch (e) {
+        alertFailedAt = Date.now();
+        console.error("lag alert:", e.message);
+      }
+    }
+  } else {
+    lastAlertAt = 0;
+  }
+  await checkFinality();
+}
+
+// Blocks can keep being produced while confirmation stops. Same threshold as the watchdog.
+async function checkFinality() {
+  const best = (await api.rpc.chain.getHeader()).number.toNumber();
+  const fin = (await api.rpc.chain.getHeader(await api.rpc.chain.getFinalizedHead())).number.toNumber();
+  const lag = best - fin;
+  if (lag <= FINALITY_LAG) {
+    lastFinalityAlertAt = 0;
+    return;
+  }
+  if (lastFinalityAlertAt && Date.now() - lastFinalityAlertAt < REMIND_MS) return;
+  if (finalityFailedAt && Date.now() - finalityFailedAt < 2 * 60 * 1000) return;
+  try {
+    await sendAlert(
+      `ZOOZ testnet : la chaîne n'arrive plus à confirmer ses blocs. Dernier bloc ${best}, dernier confirmé ${fin} (retard de ${lag} blocs).`,
+    );
+    lastFinalityAlertAt = Date.now();
+    finalityFailedAt = 0;
+  } catch (e) {
+    finalityFailedAt = Date.now();
+    console.error("finality alert:", e.message);
+  }
+}
+
+// App check. One pending mark per 30 s is enough: any later app transaction clears every mark
+// made before it (with EXPECT_SLACK_MS for the delay of the request and the clocks).
+const EXPECT_SECRET = process.env.EXPECT_SECRET ?? "";
+const EXPECT_WAIT_MS = Number(process.env.EXPECT_WAIT_MS ?? 10 * 60 * 1000);
+const EXPECT_SLACK_MS = 30_000;
+let expectAlertAt = 0;
+let expectFailedAt = 0;
+let expectDown = false;
+let appSigners = { at: 0, v: [] };
+
+function expectAllowed(header) {
+  if (!EXPECT_SECRET || typeof header !== "string") return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(EXPECT_SECRET);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// A ZOOZ transfer signed on a phone is checked by its hash (public on chain); other actions only
+// say "something should come".
+function expectReceived(tx) {
+  const now = Date.now();
+  if (typeof tx === "string" && /^0x[0-9a-f]{64}$/.test(tx)) {
+    if (q("SELECT COUNT(*) c FROM expect_txs").get().c < 1000) q("INSERT OR IGNORE INTO expect_txs(hash, at) VALUES(?, ?)").run(tx, now);
+    return;
+  }
+  const last = q("SELECT MAX(at) m FROM expects").get().m ?? 0;
+  if (now - last >= 30_000) q("INSERT OR IGNORE INTO expects(at) VALUES(?)").run(now);
+}
+
+async function signers() {
+  if (Date.now() - appSigners.at < 60_000) return appSigners.v;
+  try {
+    const keys = await api.query.coaliLedger.attesters.keys();
+    appSigners = { at: Date.now(), v: keys.map((k) => encodeAddress(k.args[0], SS58)) };
+  } catch (e) {
+    console.error("app check: attesters not read:", e.message);
+  }
+  return appSigners.v;
+}
+
+const israelTime = (ms) =>
+  new Date(ms).toLocaleString("fr-FR", { timeZone: "Asia/Jerusalem", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+async function checkExpects() {
+  const apps = await signers();
+  const lastTx = apps.length
+    ? q(`SELECT MAX(ts) m FROM xts WHERE signer IN (${apps.map(() => "?").join(",")})`).get(...apps).m ?? 0
+    : 0;
+  q("DELETE FROM expects WHERE at <= ?").run(lastTx + EXPECT_SLACK_MS);
+  q("DELETE FROM expect_txs WHERE hash IN (SELECT hash FROM xts WHERE hash IN (SELECT hash FROM expect_txs))").run();
+  const oldestAction = q("SELECT MIN(at) m FROM expects").get().m;
+  const oldestTransfer = q("SELECT MIN(at) m FROM expect_txs").get().m;
+  const oldest = oldestAction && oldestTransfer ? Math.min(oldestAction, oldestTransfer) : oldestAction || oldestTransfer;
+  const isTransfer = !!oldestTransfer && oldest === oldestTransfer;
+  if (!oldest) {
+    if (expectDown) {
+      try {
+        await sendAlert("ZOOZ testnet : les actions de l'application arrivent de nouveau sur la blockchain.");
+        expectDown = false;
+        expectAlertAt = 0;
+      } catch (e) {
+        console.error("app check recovery alert:", e.message);
+      }
+    }
+    return;
+  }
+  if (Date.now() - oldest < EXPECT_WAIT_MS) return;
+  expectDown = true;
+  if (expectAlertAt && Date.now() - expectAlertAt < REMIND_MS) return;
+  if (expectFailedAt && Date.now() - expectFailedAt < 2 * 60 * 1000) return;
+  const behind = finalized - (q("SELECT MAX(n) m FROM blocks").get().m ?? -1);
+  try {
+    await sendAlert(
+      (isTransfer
+        ? `ZOOZ testnet : un transfert de ZOOZ envoyé depuis un téléphone à ${israelTime(oldest)} n'est pas arrivé sur la blockchain après ${Math.round(EXPECT_WAIT_MS / 60_000)} minutes.`
+        : `ZOOZ testnet : une action faite dans l'application à ${israelTime(oldest)} n'est pas arrivée sur la blockchain après ${Math.round(EXPECT_WAIT_MS / 60_000)} minutes. ` +
+          `Dernière transaction de l'application : ${lastTx ? israelTime(lastTx) : "aucune"}.`) +
+        (behind > 20 ? ` L'explorateur a aussi ${behind} blocs de retard.` : ""),
+    );
+    expectAlertAt = Date.now();
+    expectFailedAt = 0;
+  } catch (e) {
+    expectFailedAt = Date.now();
+    console.error("app check alert:", e.message);
+  }
+}
+
 async function sync() {
   if (syncing) return;
   syncing = true;
@@ -180,15 +414,7 @@ async function sync() {
     let next = (q("SELECT MAX(n) m FROM blocks").get().m ?? -1) + 1;
     while (next <= finalized) {
       const to = Math.min(finalized, next + BATCH - 1);
-      const items = await Promise.all(Array.from({ length: to - next + 1 }, (_, k) => fetchBlock(next + k)));
-      db.exec("BEGIN");
-      try {
-        items.forEach(store);
-        db.exec("COMMIT");
-      } catch (e) {
-        db.exec("ROLLBACK");
-        throw e;
-      }
+      await indexFrom(next, to);
       if (to % 1000 < BATCH) console.log(`indexed #${to} / ${finalized}`);
       next = to + 1;
     }
@@ -196,12 +422,15 @@ async function sync() {
     console.error("sync error:", e.message);
   } finally {
     syncing = false;
+    checkLag().catch((e) => console.error("lag check:", e.message));
   }
 }
 
+listening = true;
+onFinalized = await api.rpc.chain.subscribeFinalizedHeads(() => sync());
 sync();
-api.rpc.chain.subscribeFinalizedHeads(() => sync());
 setInterval(sync, 30_000);
+if (EXPECT_SECRET) setInterval(() => checkExpects().catch((e) => console.error("app check:", e.message)), 30_000);
 
 // ---------- API ----------
 
@@ -357,6 +586,65 @@ const tokenEvents = (section, field, id, p) =>
   q(`SELECT * FROM evs WHERE section=? AND json_extract(data, ?)=? AND n < ? ORDER BY n DESC, i DESC LIMIT ?`)
     .all(section, `$.${field}`, String(id), before(p.before), lim(p.limit, 50))
     .map(parseRow);
+
+function bytesToText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") {
+    if (!v.startsWith("0x")) return v;
+    const hex = v.slice(2);
+    if (!hex || hex.length % 2) return v;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    const s = new TextDecoder().decode(bytes);
+    return s || v;
+  }
+  if (Array.isArray(v)) return new TextDecoder().decode(Uint8Array.from(v));
+  if (typeof v.toUtf8 === "function") {
+    try {
+      const s = v.toUtf8();
+      if (s) return s;
+    } catch {}
+  }
+  try {
+    return new TextDecoder().decode(v.toU8a(true));
+  } catch {
+    return String(v);
+  }
+}
+
+// After a decision closes, revealVotes writes the choice in the extrinsic. The chain only
+// stores that the voter was revealed, so the choice shown is the one from a successful
+// extrinsic whose voter is still marked revealed on chain.
+async function revealedChoices(id, L) {
+  const [keys, tally, rows] = await Promise.all([
+    L.revealed?.keys(id) ?? [],
+    L.revealedTally?.entries(id) ?? [],
+    Promise.resolve(
+      q("SELECT args FROM xts WHERE section='coaliLedger' AND method='revealVotes' AND ok=1 AND instr(lower(args), ?) > 0").all(id),
+    ),
+  ]);
+  const onChain = new Set((keys ?? []).map((k) => encodeAddress(k.args[1], SS58)));
+  const reveals = {};
+  for (const row of rows) {
+    let args;
+    try {
+      args = JSON.parse(row.args);
+    } catch {
+      continue;
+    }
+    const list = args.reveals;
+    if (!Array.isArray(list)) continue;
+    for (const r of list) {
+      const voter = normAddr(r.voter) ?? (typeof r.voter === "string" ? r.voter : null);
+      if (!voter || !onChain.has(voter)) continue;
+      reveals[voter] = bytesToText(r.option);
+    }
+  }
+  return {
+    reveals,
+    revealedTally: (tally ?? []).map(([k, v]) => ({ option: bytesToText(k.args[1]), count: v.toNumber() })),
+  };
+}
 
 const routes = {
   async stats() {
@@ -541,6 +829,31 @@ const routes = {
     };
   },
 
+  // On demand only. The decision page does not read every opened vote.
+  async count(p) {
+    const id = String(p.id ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{32}$/.test(id)) return null;
+    const L = api.query.coaliLedger;
+    const [info, votes] = await Promise.all([L.decisions(id), L.voteCount(id)]);
+    if (info.isNone) return null;
+    const closed = info.unwrap().closed.isTrue;
+    const n = votes.toNumber();
+    if (!closed) return { id, closed: false, votes: n, sealed: true };
+    const [choices, recount, revealed] = await Promise.all([
+      revealedChoices(id, L),
+      L.recountOf?.(id),
+      L.revealedCount?.(id),
+    ]);
+    return {
+      id,
+      closed: true,
+      votes: n,
+      revealed: revealed ? revealed.toNumber() : 0,
+      recount: recount?.isSome ? { matches: recount.unwrap().matches.isTrue, votes: recount.unwrap().votes.toNumber() } : null,
+      ...choices,
+    };
+  },
+
   async tokens(p) {
     return page(await allTokens(), p);
   },
@@ -720,6 +1033,28 @@ function cached(key, ttl, compute) {
 http
   .createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
+    if (req.method === "POST" && url.pathname === "/api/expect") {
+      res.setHeader("Content-Type", "application/json");
+      if (!expectAllowed(req.headers["x-expect-secret"])) {
+        req.resume();
+        return res.writeHead(404).end(JSON.stringify({ error: "not found" }));
+      }
+      let body = "";
+      req.on("data", (c) => {
+        if (body.length < 2048) body += c;
+      });
+      req.on("end", () => {
+        let tx;
+        try {
+          tx = JSON.parse(body || "{}").tx;
+        } catch {
+          tx = undefined;
+        }
+        expectReceived(typeof tx === "string" ? tx.toLowerCase() : undefined);
+        res.writeHead(204).end();
+      });
+      return;
+    }
     const parts = url.pathname.replace(/^\/api\/?/, "").split("/").filter(Boolean);
     const fn = routes[parts[0]];
     const params = { ...Object.fromEntries(url.searchParams), id: parts[1] ? decodeURIComponent(parts[1]) : undefined };

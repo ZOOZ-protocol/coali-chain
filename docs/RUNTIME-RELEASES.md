@@ -9,6 +9,10 @@ Storage migrations so far run in the upgrade block (single-block). That is fine 
 before mainnet, any migration that walks a large map (trusts, votes) must be multi-block
 (`pallet-migrations`), so that an upgrade can never exceed a block's weight.
 
+## 209 — prepared, not on the testnet yet
+
+`recordVote`, `revealVotes` and `publishSnapshot` are `DispatchClass::Operational`, so they keep the 25% of the block that transfers cannot fill. `recordTrust` stays normal, with at most 15% of the normal-class weight per block, 32 calls per attester per block, and one change per edge (truster, trusted, category) per hour (`QuotaExceeded`, `TooSoon`). The live upgrade needs the offline admin key. No migration: the new counters start empty.
+
 ## 208 — live since 2026-10-20 (block #87180)
 
 | | |

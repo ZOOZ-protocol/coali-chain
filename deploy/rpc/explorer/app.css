@@ -5,6 +5,9 @@ a{color:var(--link);text-decoration:none}a:hover{color:#063b5c}
 .wrap,.in{max-width:1400px;margin:0 auto;padding:0 18px}
 .grow{flex:1;min-width:0}
 /* top bar + header */
+.notice{background:#21325b;color:#fff;font-size:13px;text-align:center}
+.notice a{color:#fff;text-decoration:underline}
+.notice .in{padding:6px 16px}
 .topbar{background:#fff;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
 .topbar .in{display:flex;align-items:center;gap:16px;height:38px}
 .topbar b{color:var(--text);font-weight:500}

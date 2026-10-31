@@ -20,11 +20,12 @@
 //   and a v2 Merkle root (leaf = blake2(0x00 ‖ voter ‖ commitment), node = blake2(0x01 ‖ l ‖ r));
 // - each (truster, trusted) pair has its own giving key, which the identity attester vouches
 //   for (only eligible users' trusts are enqueued), so private trusts cannot be linked;
-//   trusts are published in shuffled batches at fixed times.
+//   public and private trusts are published as soon as they are given. TRUST_ATTESTER_URI,
+//   once registered on chain, signs trusts so their nonce queue cannot hold a vote.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CHAIN_WS, CHAIN_NETWORK,
 //      CHAIN_TAG (8 chars, must match the runtime), ATTESTER_URI, VOTER_MASTER_SEED,
-//      IDENTITY_ATTESTER_URI (default: ATTESTER_URI), TRUST_BATCH_HOURS (default 6).
+//      IDENTITY_ATTESTER_URI (default: ATTESTER_URI), TRUST_BATCH_HOURS (default 0: immediate).
 // Flags: --once (single tick), --interval=<seconds> (default 30).
 
 import { ApiPromise, WsProvider } from "@polkadot/api";
@@ -41,7 +42,7 @@ const SUPABASE_URL = env("SUPABASE_URL");
 const SERVICE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
 const NETWORK = env("CHAIN_NETWORK", "local");
 const CHAIN_TAG = stringToU8a(env("CHAIN_TAG", "coali-01"));
-const TRUST_BATCH_MS = Number(env("TRUST_BATCH_HOURS", "6")) * 3600_000;
+const TRUST_BATCH_MS = Number(env("TRUST_BATCH_HOURS", "0")) * 3600_000;
 const MAX_ATTEMPTS = 5;
 const BATCH = 200;
 if (CHAIN_TAG.length !== 8) throw new Error("CHAIN_TAG must be 8 bytes");
@@ -51,6 +52,40 @@ const once = args.has("--once");
 const interval = Number([...args].find((a) => a.startsWith("--interval="))?.split("=")[1] ?? 30);
 const log = (...a) => console.log(`[${NETWORK}]`, ...a);
 const alert = (...a) => console.error(`[${NETWORK}] ALERT`, ...a);
+
+// Same sender as the app (WhatsApp, SMS if WhatsApp fails). One message per distinct
+// problem, then a reminder every 30 minutes while it lasts.
+const ALERT_PHONE = process.env.ALERT_PHONE ?? "";
+const ALERT_REMIND_MS = 30 * 60 * 1000;
+const alertedAt = new Map();
+async function notify(text) {
+  alert(text);
+  const key = String(text).slice(0, 180);
+  const prev = alertedAt.get(key) ?? 0;
+  if (Date.now() - prev < ALERT_REMIND_MS) return;
+  alertedAt.set(key, Date.now());
+  if (!ALERT_PHONE) return;
+  const keyHint = /401|403|Invalid API key|JWT/.test(key) ? " La clé d'accès à la base a peut-être changé." : "";
+  try {
+    const res = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/send-whatsapp-notification`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        apikey: SERVICE_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        phone: ALERT_PHONE,
+        message: `ZOOZ : l'écriture entre le serveur et la chaîne a échoué. ${text}${keyHint}`.slice(0, 900),
+      }),
+    });
+    log("alert send", res.status);
+    if (!res.ok) alertedAt.delete(key);
+  } catch (e) {
+    alertedAt.delete(key);
+    log("alert send failed:", e.message);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Supabase (PostgREST with the service key)
@@ -139,6 +174,9 @@ await cryptoWaitReady();
 const api = await ApiPromise.create({ provider: new WsProvider(env("CHAIN_WS", "ws://127.0.0.1:9944")), noInitWarn: true });
 const keyring = new Keyring({ type: "sr25519", ss58Format: api.registry.chainSS58 ?? 42 });
 const attester = keyring.addFromUri(env("ATTESTER_URI"));
+// Votes keep this key. Trusts use a second one so a trust nonce can never hold a vote.
+// Until TRUST_ATTESTER_URI is set and registered, trusts keep the vote key.
+const trustAttester = process.env.TRUST_ATTESTER_URI ? keyring.addFromUri(process.env.TRUST_ATTESTER_URI) : attester;
 const identityAttester = keyring.addFromUri(env("IDENTITY_ATTESTER_URI", env("ATTESTER_URI")));
 const MASTER = env("VOTER_MASTER_SEED");
 const voterKey = (userId, decisionId) => keyring.addFromUri(`${MASTER}//coali//u//${userId}//vote//${decisionId}`);
@@ -177,6 +215,10 @@ const endsAtFor = (expiresAt) =>
   Math.max(expiresAt ? new Date(expiresAt).getTime() : Date.now() + 10 * 365 * 86_400_000, Date.now() + MIN_VOTING_MS + 2 * 60_000);
 if (!(await api.query.coaliLedger.attesters(attester.address)).isSome) {
   throw new Error(`${attester.address} is not an attester on this chain`);
+}
+if (trustAttester.address === attester.address) log("warning: TRUST_ATTESTER_URI unset; trusts share the vote key");
+else if (!(await api.query.coaliLedger.attesters(trustAttester.address)).isSome) {
+  throw new Error(`${trustAttester.address} is not an attester on this chain`);
 }
 const canAttestIdentities = (await api.query.proofOfTrust.identityAttesters(identityAttester.address)).isSome;
 if (!canAttestIdentities) log(`warning: ${identityAttester.address} is not an identity attester; trust from new addresses will not count for validators`);
@@ -445,7 +487,7 @@ async function revealVotes() {
     if (r.ok) {
       sent += reveals.length;
       const recount = await api.query.coaliLedger.recountOf(id);
-      if (recount.isSome && !recount.unwrap().matches.isTrue) alert(`recount of ${f.decision_id} does not match the published totals`);
+      if (recount.isSome && !recount.unwrap().matches.isTrue) notify(`le recomptage de ${f.decision_id} ne correspond pas aux totaux publiés`);
     } else log(`reveal for ${f.decision_id}: ${r.error}`);
   }
   return sent;
@@ -466,13 +508,190 @@ async function reportAbandoned() {
     `chain_outbox?select=id,kind,ref,last_error&network=eq.${NETWORK}&status=eq.failed&attempts=gte.${MAX_ATTEMPTS}&limit=20`,
   );
   for (const r of stuck) {
-    alert(`row ${r.id} (${r.kind} ${r.ref}) abandoned after ${MAX_ATTEMPTS} attempts: ${r.last_error}`);
+    notify(`écriture abandonnée après ${MAX_ATTEMPTS} essais : ${r.kind} ${r.ref} (${r.last_error})`);
     await updateRow(r.id, { status: "abandoned" });
   }
 }
 
+// ---------------------------------------------------------------------------
+// ZOOZ wallets (Emunify): transfers are signed on the users' phones; the relayer only confirms
+// them from finalized blocks and sends the test ZOOZ of a new wallet (WELCOME_URI, testnet).
+// ---------------------------------------------------------------------------
+const welcomeKey = process.env.WELCOME_URI && NETWORK !== "mainnet" ? keyring.addFromUri(process.env.WELCOME_URI) : null;
+const ZOOZ_UNIT = 10n ** 9n;
+const ZOOZ_LOOKBACK_BLOCKS = 600;
+const ZOOZ_MAX_BLOCKS_PER_TICK = 200;
+const ZOOZ_GIVE_UP_MS = 60 * 60 * 1000;
+let zoozScanned = null;
+const zoozSeen = new Set();
+
+const destOf = (arg) => (arg.isId ? arg.asId.toString() : arg.toString());
+
+async function confirmZoozTransfers() {
+  const open = await rest(
+    `zooz_chain_transfers?select=id,tx_hash,from_address,to_address,amount,created_at&network=eq.${NETWORK}&status=eq.submitted&order=created_at.asc&limit=200`,
+  );
+  const finalized = (await api.rpc.chain.getHeader(await api.rpc.chain.getFinalizedHead())).number.toNumber();
+  if (zoozScanned === null) zoozScanned = Math.max(0, finalized - ZOOZ_LOOKBACK_BLOCKS);
+  if (!open.length) {
+    zoozScanned = finalized;
+    return 0;
+  }
+  // A row recorded late may point at blocks already scanned: go back to its time.
+  for (const r of open) {
+    if (zoozSeen.has(r.id)) continue;
+    zoozSeen.add(r.id);
+    const back = Math.ceil((Date.now() - Date.parse(r.created_at)) / 6000) + 10;
+    zoozScanned = Math.min(zoozScanned, Math.max(0, finalized - back));
+  }
+  const byHash = new Map(open.map((r) => [r.tx_hash, r]));
+  const to = Math.min(finalized, zoozScanned + ZOOZ_MAX_BLOCKS_PER_TICK);
+  let done = 0;
+  for (let n = zoozScanned + 1; n <= to && byHash.size; n++) {
+    const hash = await api.rpc.chain.getBlockHash(n);
+    const [block, events] = await Promise.all([api.rpc.chain.getBlock(hash), api.query.system.events.at(hash)]);
+    for (const [i, ex] of block.block.extrinsics.entries()) {
+      const row = byHash.get(ex.hash.toHex());
+      if (!row) continue;
+      byHash.delete(row.tx_hash);
+      const own = events.filter((e) => e.phase.isApplyExtrinsic && e.phase.asApplyExtrinsic.eqn(i));
+      const succeeded = own.some((e) => e.event.section === "system" && e.event.method === "ExtrinsicSuccess");
+      const isTransfer = ex.method.section === "balances" && ["transferKeepAlive", "transferAllowDeath"].includes(ex.method.method);
+      const matches =
+        isTransfer &&
+        ex.signer.toString() === row.from_address &&
+        destOf(ex.method.args[0]) === row.to_address &&
+        ex.method.args[1].toString() === String(row.amount);
+      const error = !succeeded ? "ExtrinsicFailed" : matches ? null : "does not match the recorded transfer";
+      await rest("rpc/zooz_confirm_transfer", {
+        method: "POST",
+        body: { p_id: row.id, p_ok: succeeded && matches, p_block: n, p_error: error },
+      });
+      done++;
+    }
+  }
+  zoozScanned = to;
+  if (to === finalized) {
+    for (const row of byHash.values()) {
+      if (Date.now() - Date.parse(row.created_at) < ZOOZ_GIVE_UP_MS) continue;
+      await rest("rpc/zooz_confirm_transfer", {
+        method: "POST",
+        body: { p_id: row.id, p_ok: false, p_block: null, p_error: "not found on chain within an hour" },
+      });
+      done++;
+    }
+  }
+  return done;
+}
+
+async function payZoozWelcomes() {
+  if (!welcomeKey) return 0;
+  const rows = await rest(
+    `zooz_wallets?select=user_id,address&network=eq.${NETWORK}&welcome_paid_at=is.null&order=created_at.asc&limit=20`,
+  );
+  if (!rows.length) return 0;
+  const settings = await rest("platform_settings?select=value&id=eq.zooz_chain");
+  const amount = BigInt(Math.round(Number(settings?.[0]?.value?.welcome_amount ?? 10))) * ZOOZ_UNIT;
+  if (amount <= 0n) return 0;
+  // Marked first, so that a crash never pays twice.
+  for (const r of rows) {
+    await rest(`zooz_wallets?user_id=eq.${r.user_id}`, { method: "PATCH", body: { welcome_paid_at: new Date().toISOString() } });
+  }
+  let nonce = (await api.rpc.system.accountNextIndex(welcomeKey.address)).toNumber();
+  const results = await Promise.all(rows.map((r) => submit(api.tx.balances.transferKeepAlive(r.address, amount), nonce++, welcomeKey)));
+  let paid = 0;
+  for (const [i, res] of results.entries()) {
+    const r = rows[i];
+    if (!res.ok) {
+      log(`welcome for ${r.user_id}: ${res.error}`);
+      await rest(`zooz_wallets?user_id=eq.${r.user_id}`, { method: "PATCH", body: { welcome_paid_at: null } });
+      continue;
+    }
+    await rest("zooz_chain_transfers", {
+      method: "POST",
+      body: {
+        network: NETWORK,
+        tx_hash: res.txHash,
+        to_user_id: r.user_id,
+        from_address: welcomeKey.address,
+        to_address: r.address,
+        amount: amount.toString(),
+        kind: "welcome",
+        status: "confirmed",
+        block_number: await blockNumber(res.blockHash),
+        confirmed_at: new Date().toISOString(),
+      },
+    });
+    await rest(`zooz_wallets?user_id=eq.${r.user_id}`, { method: "PATCH", body: { welcome_tx_hash: res.txHash } });
+    paid++;
+  }
+  return paid;
+}
+
+// ---------------------------------------------------------------------------
+// KYC level 3 (Sumsub): the KYC-3 identity attester (KYC3_ATTESTER_URI) stamps the wallet address
+// of each approved KYC and withdraws it when the KYC is no longer approved or the wallet changed.
+// Which approvals a network receives (sandbox / production) is set in platform_settings.kyc_chain.
+// ---------------------------------------------------------------------------
+const kyc3Key = process.env.KYC3_ATTESTER_URI ? keyring.addFromUri(process.env.KYC3_ATTESTER_URI) : null;
+let kyc3Ready = null;
+
+async function syncKycAttestations() {
+  if (!kyc3Key) return 0;
+  if (kyc3Ready === null) {
+    kyc3Ready = (await api.query.proofOfTrust.identityAttesters(kyc3Key.address)).isSome;
+    if (!kyc3Ready) log(`warning: ${kyc3Key.address} (KYC-3) is not an identity attester on this chain; KYC stamps wait`);
+  }
+  if (!kyc3Ready) return 0;
+  const rows = await rest("rpc/kyc_chain_pending", { method: "POST", body: { p_network: NETWORK } });
+  if (!rows?.length) return 0;
+  let nonce = (await api.rpc.system.accountNextIndex(kyc3Key.address)).toNumber();
+  const results = await Promise.all(
+    rows.map((r) => submit(api.tx.proofOfTrust.attestIdentity(r.address, r.action === "attest"), nonce++, kyc3Key)),
+  );
+  let done = 0;
+  for (const [i, res] of results.entries()) {
+    const r = rows[i];
+    const attest = r.action === "attest";
+    await rest("kyc_chain_attestations?on_conflict=user_id,network", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: {
+        user_id: r.user_id,
+        network: NETWORK,
+        address: r.address,
+        level: 3,
+        attested: res.ok ? attest : !attest,
+        tx_hash: res.txHash,
+        error: res.ok ? null : res.error,
+        updated_at: new Date().toISOString(),
+      },
+    });
+    if (res.ok) done++;
+    else log(`kyc ${r.action} ${r.address}: ${res.error}`);
+  }
+  return done;
+}
+
 async function tick() {
   eligibleVoters = null;
+  const kycStamps = await syncKycAttestations().catch((e) => {
+    notify(`inscription des KYC refusée : ${e.message}`);
+    return 0;
+  });
+  if (kycStamps) log(`kyc: ${kycStamps} stamps written`);
+  const zoozConfirmed = await confirmZoozTransfers().catch((e) => {
+    log("zooz transfer check failed:", e.message);
+    return 0;
+  });
+  if (zoozConfirmed) log(`zooz: ${zoozConfirmed} transfers checked`);
+  const welcomed = await payZoozWelcomes().catch((e) => {
+    notify(`envoi des ZOOZ de bienvenue refusé : ${e.message}`);
+    return 0;
+  });
+  if (welcomed) log(`zooz: ${welcomed} welcome transfers`);
+  // Local wallet tests against the shared database: nothing else may run.
+  if (process.env.ZOOZ_ONLY === "1") return;
   // Turns new votes (and inferred votes past their change window) into official votes,
   // which chain_outbox_enqueue picks up. Touches board_* tables only.
   await rest("rpc/board_recompute_dirty", { method: "POST", body: { p_limit: 500 } }).catch((e) =>
@@ -485,38 +704,46 @@ async function tick() {
   }
   const enqTrust = await rest("rpc/chain_outbox_enqueue_trust", { method: "POST", body: { p_network: NETWORK } });
   enq.trusts = enqTrust?.trusts ?? 0;
-  await publishElectorate().catch((e) => log("electorate publication failed:", e.message));
+  await publishElectorate().catch((e) => notify(`publication de l'électorat refusée : ${e.message}`));
   const cleared = await publishClear().catch((e) => {
-    log("clear publication failed:", e.message);
+    notify(`publication des textes refusée : ${e.message}`);
     return 0;
   });
   if (cleared) log(`published ${cleared} decision texts / result totals (pre-204)`);
   const ruled = await setLegacyRules().catch((e) => {
-    log("legacy rules failed:", e.message);
+    notify(`écriture des règles refusée : ${e.message}`);
     return 0;
   });
   if (ruled) log(`set rules on ${ruled} pre-204 decisions`);
   const revealed = await revealVotes().catch((e) => {
-    log("reveals failed:", e.message);
+    notify(`ouverture des votes refusée : ${e.message}`);
     return 0;
   });
   if (revealed) log(`revealed ${revealed} votes of closed decisions`);
   await reportAbandoned().catch((e) => log("abandoned report failed:", e.message));
 
-  // Trusts enqueued before the last batch boundary go out now, shuffled; later ones wait.
-  const boundary = new Date(Math.floor(Date.now() / TRUST_BATCH_MS) * TRUST_BATCH_MS).toISOString();
+  // With batches, trusts enqueued before the last boundary go out now, shuffled; later ones wait.
+  const beforeBoundary =
+    TRUST_BATCH_MS > 0
+      ? `&created_at=lt.${new Date(Math.floor(Date.now() / TRUST_BATCH_MS) * TRUST_BATCH_MS).toISOString()}`
+      : "";
   const other = await rest(
     `chain_outbox?select=*&network=eq.${NETWORK}&kind=neq.trust&status=in.(pending,sent,failed)&attempts=lt.${MAX_ATTEMPTS}&order=id.asc&limit=${BATCH}`,
   );
   const trusts = await rest(
-    `chain_outbox?select=*&network=eq.${NETWORK}&kind=eq.trust&status=in.(pending,sent,failed)&attempts=lt.${MAX_ATTEMPTS}&created_at=lt.${boundary}&order=id.asc&limit=${BATCH}`,
+    `chain_outbox?select=*&network=eq.${NETWORK}&kind=eq.trust&status=in.(pending,sent,failed)&attempts=lt.${MAX_ATTEMPTS}${beforeBoundary}&order=id.asc&limit=${BATCH}`,
   );
   const rows = [...other, ...shuffle(trusts)];
   if (rows.length === 0) return;
 
   let nonce = (await api.rpc.system.accountNextIndex(attester.address)).toNumber();
+  let trustNonce = trustAttester.address === attester.address ? null : (await api.rpc.system.accountNextIndex(trustAttester.address)).toNumber();
   let idNonce = identityAttester.address === attester.address ? null : (await api.rpc.system.accountNextIndex(identityAttester.address)).toNumber();
-  const nextNonce = (signer) => (signer.address === attester.address ? nonce++ : idNonce++);
+  const nextNonce = (signer) => {
+    if (signer.address === trustAttester.address && trustNonce !== null) return trustNonce++;
+    if (signer.address === attester.address) return nonce++;
+    return idNonce++;
+  };
   const tickState = { trusters: new Set(), votes: new Map(), caps: new Map() };
   const inflight = [];
   for (const row of rows) {
@@ -530,16 +757,19 @@ async function tick() {
       }
       const pre = (prep.pre ?? []).map((p) => submit(p.tx, nextNonce(p.signer), p.signer));
       await updateRow(row.id, { status: "sent", attempts: row.attempts + 1, result: prep.result, ...prep.extra });
-      inflight.push({ row, pre, done: submit(prep.tx, nonce++) });
+      const signer = row.kind === "trust" ? trustAttester : attester;
+      inflight.push({ row, pre, done: submit(prep.tx, nextNonce(signer), signer) });
     } catch (e) {
       if (e instanceof Defer) continue;
       await updateRow(row.id, { status: "failed", attempts: row.attempts + 1, last_error: String(e.message ?? e) });
+      await notify(`écriture impossible : ${row.kind} ${row.ref ?? row.id} : ${e.message ?? e}`);
     }
   }
 
   let ok = 0;
   for (const { row, pre, done } of inflight) {
-    for (const r of await Promise.all(pre)) if (!r.ok) log(`row ${row.id}: preparatory transaction failed: ${r.error}`);
+    const failed = [];
+    for (const r of await Promise.all(pre)) if (!r.ok) failed.push(`préparation ${row.kind} ${row.ref ?? row.id}: ${r.error}`);
     const r = await done;
     if (r.ok) {
       ok++;
@@ -555,27 +785,39 @@ async function tick() {
       // consuming an attempt.
       await updateRow(row.id, { status: "pending", attempts: row.attempts, last_error: r.error });
     } else {
+      failed.push(`${row.kind} ${row.ref ?? row.id}: ${r.error}`);
       await updateRow(row.id, { status: "failed", tx_hash: r.txHash, last_error: r.error });
     }
+    if (failed.length) await notify(failed.slice(0, 5).join(" ; "));
   }
   log(`enqueued ${JSON.stringify(enq)}; sent ${inflight.length}, confirmed ${ok}`);
 }
 
-// Without a successful tick for STALL_EXIT_MIN minutes (node unreachable, e.g. the validator
-// container it shares a network with restarted), exit so that Docker restarts the relayer.
+// Without a successful tick for STALL_EXIT_MIN minutes (node unreachable, or a tick that
+// never returns), exit so that Docker restarts the relayer. The timer also covers a tick
+// that hangs, which the catch below never sees.
 const STALL_EXIT_MS = Number(process.env.STALL_EXIT_MIN ?? 10) * 60_000;
 let lastOk = Date.now();
+let stallTimer = null;
+function armStall() {
+  if (stallTimer) clearTimeout(stallTimer);
+  if (once) return;
+  const wait = Math.max(1000, STALL_EXIT_MS - (Date.now() - lastOk));
+  stallTimer = setTimeout(() => {
+    notify(`le relais n'a pas fini son tour depuis ${Math.round((Date.now() - lastOk) / 60_000)} min. Il redémarre.`)
+      .finally(() => process.exit(1));
+  }, wait);
+}
+armStall();
 do {
   try {
     await tick();
     lastOk = Date.now();
   } catch (e) {
     log("tick failed:", e.message ?? e);
-    if (!once && Date.now() - lastOk > STALL_EXIT_MS) {
-      alert(`no successful tick for ${Math.round((Date.now() - lastOk) / 60_000)} min, exiting to be restarted`);
-      process.exit(1);
-    }
+    await notify(`le relais n'arrive plus à joindre la chaîne ou la base : ${e.message ?? e}`);
   }
+  armStall();
   if (!once) await new Promise((r) => setTimeout(r, interval * 1000));
 } while (!once);
 
