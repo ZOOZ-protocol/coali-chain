@@ -2,8 +2,10 @@
 
 **A public proof ledger for democratic votes, secured by Proof of Trust.**
 
-Coalichain is the blockchain of the [ZOOZ Protocol](https://github.com/ZOOZ-protocol). It records the votes, trusts and results of the Coali and Popolitica apps as verifiable proofs, and its validators are chosen by **Proof of Trust**: no staking, no mining — identity-verified people who receive public trust from the community.
+Coalichain is the blockchain of the [ZOOZ Protocol](https://zooz.network). It records the votes, trusts and results of every app built on the protocol as verifiable proofs — today Emunify and Coali, and any new app that joins. Its validators are chosen by **Proof of Trust**: no staking, no mining — identity-verified people who receive public trust from the community.
 
+- Website: <https://zooz.network>
+- Built by [Coalichain](https://zooz.coali.app), since 2016
 - Testnet: <https://testnet.zooz.network>
 - RPC: `wss://rpc.testnet.zooz.network`
 - Explorer: <https://explorer.testnet.zooz.network>
@@ -18,7 +20,7 @@ Token: **ZOOZ** (Coalichain Token), 9 decimals. Testnet tokens have no value.
 
 | Layer | What it does |
 |---|---|
-| Apps (Coali, Popolitica) | Users vote and give trust. Tallies are computed off chain. |
+| Apps (Emunify, Coali, and any app built on ZOOZ Protocol) | Users vote and give trust. Tallies are computed off chain. |
 | Relayer | Publishes signed events to the chain: decisions, votes (one-time hard-derived address per vote, commitment only), public trusts, Merkle snapshots of results. The app pays all fees. |
 | `pallet-coali-ledger` | Stores decisions, vote commitments, trust edges and result snapshots; verifies every signature on chain. |
 | `pallet-proof-of-trust` | Selects validators each session: founders, then identity-attested candidates whose trust address has at least `MinTrust` distinct trusters, most trusted first. Validators that stop authoring are set aside so that offline nodes cannot stall finality. |
