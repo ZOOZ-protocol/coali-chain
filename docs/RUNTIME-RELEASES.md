@@ -9,9 +9,19 @@ Storage migrations so far run in the upgrade block (single-block). That is fine 
 before mainnet, any migration that walks a large map (trusts, votes) must be multi-block
 (`pallet-migrations`), so that an upgrade can never exceed a block's weight.
 
-## 209 — prepared, not on the testnet yet
+## 209 — live since 2026-11-01 (block #251407)
 
-`recordVote`, `revealVotes` and `publishSnapshot` are `DispatchClass::Operational`, so they keep the 25% of the block that transfers cannot fill. `recordTrust` stays normal, with at most 15% of the normal-class weight per block, 32 calls per attester per block, and one change per edge (truster, trusted, category) per hour (`QuotaExceeded`, `TooSoon`). The live upgrade needs the offline admin key. No migration: the new counters start empty.
+| | |
+|---|---|
+| Release | [`runtime-209-rc1`](https://github.com/ZOOZ-protocol/coali-chain/releases/tag/runtime-209-rc1) (commit `f357ff4`) |
+| File | `coali_runtime.compact.compressed.wasm`, 731 368 bytes |
+| blake2-256 | `0x483c54f9972562443e964303bb02d562a1aaadf73c9e49e78ff5a51b4c02ba23` |
+| Proposal hash (`system.setCode`) | `0x44b26e48d854b56315ed7c5ff837d817ae8af18afea254565d47527c79edabda` |
+| Build | srtool (CI job "Reproducible runtime (srtool)"), package `coali-runtime`, runtime dir `runtime` |
+| spec / transaction version | 209 / 2 |
+| Changes | `recordVote`, `revealVotes` and `publishSnapshot` are `DispatchClass::Operational`, so they keep the 25% of the block that transfers cannot fill. `recordTrust` stays normal, with at most 15% of the normal-class weight per block, 32 calls per attester per block, and one change per edge (truster, trusted, category) per hour (`QuotaExceeded`, `TooSoon`). No migration: the new counters start empty. |
+
+Rehearsed on a local chain started from the 208 release file with `scripts/e2e/rehearse-209.mjs` (release wasm); applied with `scripts/e2e/set-code.mjs`. The relayer waits for the hour instead of sending a refused trust change. On the testnet after the upgrade: `:code` hashes to the value above, blocks and finality continue, 4 validators, the relayer picked up spec 209 without a restart, `relayer/reconcile.mjs` reports 5 mismatches, all queued votes of one user that are no longer official votes in the app.
 
 ## 208 — live since 2026-10-20 (block #87180)
 
