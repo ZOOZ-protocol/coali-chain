@@ -243,7 +243,7 @@ async function blockNumber(hash) {
 }
 
 // Errors that do not consume an attempt: the row is retried next tick.
-const TRANSIENT = /VotingNotEnded|VoteCountMismatchLocal|TrusterBusy|TrustBatchWait|NoRules/;
+const TRANSIENT = /VotingNotEnded|VoteCountMismatchLocal|TrusterBusy|TrustBatchWait|NoRules|TooSoon|QuotaExceeded/;
 class Defer extends Error {}
 
 // Number of eligible voters (user_meets_vote_eligibility), read once per tick.
@@ -271,6 +271,12 @@ async function prepare(row, tick) {
     const extra = { chain_address: truster.address };
     const exists = (await api.query.coaliLedger.trustEdges(truster.address, trusted.address, p.category_id)).isSome;
     if ((p.action === "Give") === exists) return { done: result, extra };
+    // Runtime 209+: an edge changes at most once per TrustChangePeriod; wait instead of paying a refused call.
+    if (api.query.coaliLedger.trustChangedAt) {
+      const at = await api.query.coaliLedger.trustChangedAt(truster.address, trusted.address, p.category_id);
+      const period = api.consts.coaliLedger.trustChangePeriod.toNumber();
+      if (at.isSome && Date.now() - at.unwrap().toNumber() < period) throw new Defer("TooSoon");
+    }
     const pre = [];
     if (p.action === "Give" && version >= 2 && canAttestIdentities && !(await api.query.proofOfTrust.verified(truster.address)).isSome) {
       pre.push({ tx: api.tx.proofOfTrust.attestIdentity(truster.address, true), signer: identityAttester });
