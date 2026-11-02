@@ -5,7 +5,7 @@
 Coalichain is the blockchain of the [ZOOZ Protocol](https://zooz.network). It records the votes, trusts and results of every app built on the protocol as verifiable proofs — today Emunify and Coali, and any new app that joins. Its validators are chosen by **Proof of Trust**: no staking, no mining — identity-verified people who receive public trust from the community.
 
 - Website: <https://zooz.network>
-- Built by [Coalichain](https://zooz.coali.app), since 2016
+- Built by [Coalichain](https://zooz.coali.app) (Cyprus, founded in 2018; building since 2016)
 - Testnet: <https://testnet.zooz.network>
 - RPC: `wss://rpc.testnet.zooz.network`
 - Explorer: <https://explorer.testnet.zooz.network>
