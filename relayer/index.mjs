@@ -32,6 +32,7 @@ import { ApiPromise, WsProvider } from "@polkadot/api";
 import { Keyring } from "@polkadot/keyring";
 import { compactAddLength, stringToU8a, u8aConcat, u8aToHex, hexToU8a, u8aEq } from "@polkadot/util";
 import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
+import { createAlerts, isOutage } from "./alerts.mjs";
 
 const env = (k, d) => {
   const v = process.env[k] ?? d;
@@ -51,59 +52,68 @@ const args = new Set(process.argv.slice(2));
 const once = args.has("--once");
 const interval = Number([...args].find((a) => a.startsWith("--interval="))?.split("=")[1] ?? 30);
 const log = (...a) => console.log(`[${NETWORK}]`, ...a);
-const alert = (...a) => console.error(`[${NETWORK}] ALERT`, ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Same sender as the app (WhatsApp, SMS if WhatsApp fails). One message per distinct
-// problem, then a reminder every 30 minutes while it lasts.
+// Alerts go to ALERT_PHONE through the app's sender (WhatsApp, SMS if WhatsApp fails).
 const ALERT_PHONE = process.env.ALERT_PHONE ?? "";
-const ALERT_REMIND_MS = 30 * 60 * 1000;
-const alertedAt = new Map();
-async function notify(text) {
-  alert(text);
-  const key = String(text).slice(0, 180);
-  const prev = alertedAt.get(key) ?? 0;
-  if (Date.now() - prev < ALERT_REMIND_MS) return;
-  alertedAt.set(key, Date.now());
-  if (!ALERT_PHONE) return;
-  const keyHint = /401|403|Invalid API key|JWT/.test(key) ? " La clé d'accès à la base a peut-être changé." : "";
+async function sendAlert(message) {
+  if (!ALERT_PHONE) return true;
   try {
     const res = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/send-whatsapp-notification`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        apikey: SERVICE_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        phone: ALERT_PHONE,
-        message: `ZOOZ : l'écriture entre le serveur et la chaîne a échoué. ${text}${keyHint}`.slice(0, 900),
-      }),
+      headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: ALERT_PHONE, message: message.slice(0, 900) }),
     });
     log("alert send", res.status);
-    if (!res.ok) alertedAt.delete(key);
+    return res.ok;
   } catch (e) {
-    alertedAt.delete(key);
     log("alert send failed:", e.message);
+    return false;
   }
 }
+const { notify, tickFailed, tickSucceeded } = createAlerts({ send: sendAlert, log: (m) => console.error(`[${NETWORK}] ${m}`) });
 
 // ---------------------------------------------------------------------------
 // Supabase (PostgREST with the service key)
 // ---------------------------------------------------------------------------
+// An HTML error page (the gateway's) says nothing useful in a log or a WhatsApp message.
+const errorText = (text) => (text.trimStart().startsWith("<") ? "" : ` ${text.slice(0, 300)}`);
+
+// Unreachable or 5xx: one more try two seconds later (the gateway in front of the database
+// answers 503 for a moment now and then), then an outage error. Every call here is safe to repeat.
 async function rest(path, { method = "GET", body, prefer = "return=minimal" } = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method,
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: prefer,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  for (let attempt = 1; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        method,
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: prefer,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (e) {
+      if (attempt < 2) {
+        await sleep(2000);
+        continue;
+      }
+      throw Object.assign(new Error(`${method} ${path}: ${e.message}`), { outage: true });
+    }
+    if (res.status >= 500) {
+      const text = await res.text();
+      if (attempt < 2) {
+        await sleep(2000);
+        continue;
+      }
+      throw Object.assign(new Error(`${method} ${path}: ${res.status}${errorText(text)}`), { outage: true });
+    }
+    if (!res.ok) throw new Error(`${method} ${path}: ${res.status}${errorText(await res.text())}`);
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
 }
 
 const updateRow = (id, patch) =>
@@ -679,30 +689,34 @@ async function syncKycAttestations() {
   return done;
 }
 
+// One part of a tick. An outage stops the tick (the loop counts it); any other error is
+// reported (only logged when quiet) and the tick goes on.
+async function step(label, fn, { quiet = false } = {}) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (isOutage(e)) throw e;
+    if (quiet) log(`${label}:`, e.message ?? e);
+    else await notify(`${label} : ${e.message ?? e}`);
+    return null;
+  }
+}
+
 async function tick() {
   eligibleVoters = null;
-  const kycStamps = await syncKycAttestations().catch((e) => {
-    notify(`inscription des KYC refusée : ${e.message}`);
-    return 0;
-  });
+  const kycStamps = await step("inscription des KYC refusée", syncKycAttestations);
   if (kycStamps) log(`kyc: ${kycStamps} stamps written`);
-  const zoozConfirmed = await confirmZoozTransfers().catch((e) => {
-    log("zooz transfer check failed:", e.message);
-    return 0;
-  });
+  const zoozConfirmed = await step("zooz transfer check failed", confirmZoozTransfers, { quiet: true });
   if (zoozConfirmed) log(`zooz: ${zoozConfirmed} transfers checked`);
-  const welcomed = await payZoozWelcomes().catch((e) => {
-    notify(`envoi des ZOOZ de bienvenue refusé : ${e.message}`);
-    return 0;
-  });
+  const welcomed = await step("envoi des ZOOZ de bienvenue refusé", payZoozWelcomes);
   if (welcomed) log(`zooz: ${welcomed} welcome transfers`);
   // Local wallet tests against the shared database: nothing else may run.
   if (process.env.ZOOZ_ONLY === "1") return;
   // Turns new votes (and inferred votes past their change window) into official votes,
   // which chain_outbox_enqueue picks up. Touches board_* tables only.
-  await rest("rpc/board_recompute_dirty", { method: "POST", body: { p_limit: 500 } }).catch((e) =>
-    log("board recompute failed:", e.message),
-  );
+  await step("board recompute failed", () => rest("rpc/board_recompute_dirty", { method: "POST", body: { p_limit: 500 } }), {
+    quiet: true,
+  });
   const enq = await rest("rpc/chain_outbox_enqueue", { method: "POST", body: { p_network: NETWORK } });
   if (!enq?.enabled) {
     log("publication disabled (platform_settings.chain_ledger.enabled_networks)");
@@ -710,23 +724,14 @@ async function tick() {
   }
   const enqTrust = await rest("rpc/chain_outbox_enqueue_trust", { method: "POST", body: { p_network: NETWORK } });
   enq.trusts = enqTrust?.trusts ?? 0;
-  await publishElectorate().catch((e) => notify(`publication de l'électorat refusée : ${e.message}`));
-  const cleared = await publishClear().catch((e) => {
-    notify(`publication des textes refusée : ${e.message}`);
-    return 0;
-  });
+  await step("publication de l'électorat refusée", publishElectorate);
+  const cleared = await step("publication des textes refusée", publishClear);
   if (cleared) log(`published ${cleared} decision texts / result totals (pre-204)`);
-  const ruled = await setLegacyRules().catch((e) => {
-    notify(`écriture des règles refusée : ${e.message}`);
-    return 0;
-  });
+  const ruled = await step("écriture des règles refusée", setLegacyRules);
   if (ruled) log(`set rules on ${ruled} pre-204 decisions`);
-  const revealed = await revealVotes().catch((e) => {
-    notify(`ouverture des votes refusée : ${e.message}`);
-    return 0;
-  });
+  const revealed = await step("ouverture des votes refusée", revealVotes);
   if (revealed) log(`revealed ${revealed} votes of closed decisions`);
-  await reportAbandoned().catch((e) => log("abandoned report failed:", e.message));
+  await step("abandoned report failed", reportAbandoned, { quiet: true });
 
   // With batches, trusts enqueued before the last boundary go out now, shuffled; later ones wait.
   const beforeBoundary =
@@ -767,6 +772,7 @@ async function tick() {
       inflight.push({ row, pre, done: submit(prep.tx, nextNonce(signer), signer) });
     } catch (e) {
       if (e instanceof Defer) continue;
+      if (isOutage(e)) throw e;
       await updateRow(row.id, { status: "failed", attempts: row.attempts + 1, last_error: String(e.message ?? e) });
       await notify(`écriture impossible : ${row.kind} ${row.ref ?? row.id} : ${e.message ?? e}`);
     }
@@ -799,32 +805,34 @@ async function tick() {
   log(`enqueued ${JSON.stringify(enq)}; sent ${inflight.length}, confirmed ${ok}`);
 }
 
-// Without a successful tick for STALL_EXIT_MIN minutes (node unreachable, or a tick that
-// never returns), exit so that Docker restarts the relayer. The timer also covers a tick
-// that hangs, which the catch below never sees.
+// A tick that does not end within STALL_EXIT_MIN minutes (a call to the node that never returns)
+// exits so that Docker restarts the relayer. Ticks that end in an error are counted by the alerts
+// instead: restarting would not help and would forget the outage in progress.
 const STALL_EXIT_MS = Number(process.env.STALL_EXIT_MIN ?? 10) * 60_000;
-let lastOk = Date.now();
 let stallTimer = null;
 function armStall() {
   if (stallTimer) clearTimeout(stallTimer);
   if (once) return;
-  const wait = Math.max(1000, STALL_EXIT_MS - (Date.now() - lastOk));
+  const started = Date.now();
   stallTimer = setTimeout(() => {
-    notify(`le relais n'a pas fini son tour depuis ${Math.round((Date.now() - lastOk) / 60_000)} min. Il redémarre.`)
+    notify(`le relais n'a pas fini son tour depuis ${Math.round((Date.now() - started) / 60_000)} min. Il redémarre.`)
       .finally(() => process.exit(1));
-  }, wait);
+  }, STALL_EXIT_MS);
 }
-armStall();
 do {
+  armStall();
   try {
     await tick();
-    lastOk = Date.now();
+    await tickSucceeded();
   } catch (e) {
-    log("tick failed:", e.message ?? e);
-    await notify(`le relais n'arrive plus à joindre la chaîne ou la base : ${e.message ?? e}`);
+    if (isOutage(e)) await tickFailed(e);
+    else {
+      log("tick failed:", e.message ?? e);
+      await notify(`le tour du relais a échoué : ${e.message ?? e}`);
+    }
   }
-  armStall();
-  if (!once) await new Promise((r) => setTimeout(r, interval * 1000));
+  if (!once) await sleep(interval * 1000);
 } while (!once);
+clearTimeout(stallTimer);
 
 await api.disconnect();

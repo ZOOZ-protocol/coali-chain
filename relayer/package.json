@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env index.mjs",
-    "once": "node --env-file=.env index.mjs --once"
+    "once": "node --env-file=.env index.mjs --once",
+    "test": "node --test"
   },
   "dependencies": {
     "@polkadot/api": "^17.0.2",
